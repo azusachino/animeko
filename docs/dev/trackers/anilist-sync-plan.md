@@ -116,14 +116,16 @@ data class TrackerMappingEntity(
 )
 ```
 
-Version bump: `version = 22` → `23`, `AutoMigration(from = 22, to = 23, spec = Migrations.Migration_22_23::class)`
-where `Migration_22_23` is an **empty** `AutoMigrationSpec` marker class — this is a purely additive change (three
+Version bump: `version = 23` → `24`, `AutoMigration(from = 23, to = 24, spec = Migrations.Migration_23_24::class)`
+where `Migration_23_24` is an **empty** `AutoMigrationSpec` marker class — this is a purely additive change (three
 new tables, no column changes to existing ones), which is the cheapest case Room's `AutoMigration` supports.
-Export the new schema JSON (`app/shared/app-data/schemas/.../23.json`) via the project's existing schema-export
-Gradle task, same as every prior version bump.
+`22 → 23` is a separate, unrelated migration (`EpisodeCollectionEntity` TMDB still columns) already on `main`;
+tracker's own version was rebased onto it as `23 → 24` when merging `main`. Export the new schema JSON
+(`app/shared/app-data/schemas/.../24.json`) via the project's existing schema-export Gradle task, same as every
+prior version bump.
 
-- [x] **TRK-01** (`MIG-06` in `AniDatabaseMigrationTest`, `desktopTest`, using `MigrationTestHelper` exactly like
-  `MIG-01`): builds a v22 database, runs the migration to v23, asserts `tracker_account`, `tracker_binding`,
+- [x] **TRK-01** (`MIG-07` in `AniDatabaseMigrationTest`, `desktopTest`, using `MigrationTestHelper` exactly like
+  `MIG-01`): builds a v23 database, runs the migration to v24, asserts `tracker_account`, `tracker_binding`,
   `tracker_mapping` all exist, and a pre-existing `search_history` row survives untouched (not
   `subject_collection` — that table has ~30 NOT NULL columns with no defaults, `search_history` is what `MIG-01`
   already uses for this exact "existing data survives" check).
