@@ -51,6 +51,7 @@ class SubjectDetailsState(
     val totalCharactersCountState: State<Int?>,
     val relatedSubjectsPager: Flow<PagingData<RelatedSubjectInfo>>,
     val editableSubjectCollectionTypeState: EditableSubjectCollectionTypeState,
+    val trackerBindingState: TrackerBindingState,
     val editableRatingState: EditableRatingState,
     val subjectProgressState: SubjectProgressState,
     val subjectCommentState: CommentState,

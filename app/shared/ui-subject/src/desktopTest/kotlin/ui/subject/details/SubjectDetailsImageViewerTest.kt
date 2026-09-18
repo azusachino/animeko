@@ -46,6 +46,7 @@ import me.him188.ani.app.ui.subject.createTestAiringLabelState
 import me.him188.ani.app.ui.subject.details.components.SUBJECT_COVER_IMAGE_TEST_TAG
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsPresentation
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsState
+import me.him188.ani.app.ui.subject.details.state.createTestTrackerBindingState
 import me.him188.ani.app.ui.subject.episode.list.TestEpisodeListUiState
 import me.him188.ani.app.ui.user.TestSelfInfoUiState
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
@@ -96,6 +97,7 @@ class SubjectDetailsImageViewerTest {
                 MutableStateFlow(UnifiedCollectionType.DOING),
                 scope,
             ),
+            trackerBindingState = createTestTrackerBindingState(scope, subjectId = info.subjectId),
             editableRatingState = createTestEditableRatingState(
                 subjectInfo,
                 selfRatingInfo = TestSelfRatingInfo,

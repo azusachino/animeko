@@ -37,6 +37,7 @@ import me.him188.ani.app.ui.subject.collection.progress.createTestSubjectProgres
 import me.him188.ani.app.ui.subject.createTestAiringLabelState
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsPresentation
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsState
+import me.him188.ani.app.ui.subject.details.state.createTestTrackerBindingState
 import me.him188.ani.app.ui.subject.episode.list.TestEpisodeListUiState
 import me.him188.ani.app.ui.user.TestSelfInfoUiState
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
@@ -78,6 +79,7 @@ class SubjectDetailsScreenshotTest {
                 MutableStateFlow(UnifiedCollectionType.DOING),
                 scope,
             ),
+            trackerBindingState = createTestTrackerBindingState(scope, subjectId = TestSubjectInfo.subjectId),
             editableRatingState = createTestEditableRatingState(
                 subjectInfo,
                 selfRatingInfo = TestSelfRatingInfo,

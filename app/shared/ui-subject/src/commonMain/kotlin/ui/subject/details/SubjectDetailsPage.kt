@@ -163,7 +163,9 @@ import me.him188.ani.app.ui.subject.details.layout.CompactDetailsTabContent
 import me.him188.ani.app.ui.subject.details.layout.SubjectDetailsLayoutParams
 import me.him188.ani.app.ui.subject.details.layout.SubjectDetailsMultiColumnPage
 import me.him188.ani.app.ui.subject.details.layout.SubjectDetailsMultiColumnPlaceholder
+import me.him188.ani.app.ui.subject.details.components.TrackerBindingChip
 import me.him188.ani.app.ui.subject.details.sections.SubjectCommentsSheet
+import me.him188.ani.app.ui.subject.details.sections.TrackerBindingBottomSheet
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsState
 import me.him188.ani.app.ui.subject.details.state.createTestSubjectDetailsState
 import me.him188.ani.app.ui.subject.episode.list.EpisodeListDialog
@@ -312,6 +314,7 @@ private fun SubjectDetailsPage(
     val openLinkFailedPrefix = stringResource(Lang.foundation_richtext_open_failed_prefix)
 
     var showSelectEpisode by rememberSaveable { mutableStateOf(false) }
+    var showTrackerBindingSheet by rememberSaveable { mutableStateOf(false) }
 
     // image viewer
     val imageViewer = rememberImageViewerHandler()
@@ -372,6 +375,13 @@ private fun SubjectDetailsPage(
                 { navigator.navigateSubjectCaches(presentation.subjectId) },
                 { navigator.navigateEpisodeDetails(presentation.subjectId, it.episodeId) },
                 onEpisodeLongClick,
+            )
+        }
+
+        if (showTrackerBindingSheet) {
+            TrackerBindingBottomSheet(
+                state.trackerBindingState,
+                onDismissRequest = { showTrackerBindingSheet = false },
             )
         }
 
@@ -443,6 +453,11 @@ private fun SubjectDetailsPage(
                 } else {
                     EditableSubjectCollectionTypeButton(state.editableSubjectCollectionTypeState)
                 }
+                Spacer(Modifier.width(8.dp))
+                TrackerBindingChip(
+                    state.trackerBindingState,
+                    onClick = { showTrackerBindingSheet = true },
+                )
             },
             rating = {
                 EditableRating(state.editableRatingState)

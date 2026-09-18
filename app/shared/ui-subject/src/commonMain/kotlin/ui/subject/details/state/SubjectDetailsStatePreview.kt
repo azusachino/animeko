@@ -51,6 +51,11 @@ fun createTestSubjectDetailsState(
             ),
             backgroundScope,
         ),
+        trackerBindingState = createTestTrackerBindingState(
+            backgroundScope,
+            subjectId = TestSubjectInfo.subjectId,
+            initialQuery = subjectInfo.displayName,
+        ),
         editableRatingState = createTestEditableRatingState(
             subjectInfo,
             selfRatingInfo = TestSelfRatingInfo,
