@@ -161,6 +161,31 @@ class AniDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIG-07 v23到v24的AutoMigration增加tracker表且已有条目保留`() {
+        val helper = createHelper()
+        helper.createDatabase(23).use { connection ->
+            val tables = connection.tableNames()
+            assertFalse(tables.contains("tracker_account"))
+            assertFalse(tables.contains("tracker_binding"))
+            assertFalse(tables.contains("tracker_mapping"))
+
+            connection.execSQL("INSERT INTO `search_history` (`content`) VALUES ('frieren')")
+        }
+        helper.runMigrationsAndValidate(24, emptyList()).use { connection ->
+            val tables = connection.tableNames()
+            assertContains(tables, "tracker_account")
+            assertContains(tables, "tracker_binding")
+            assertContains(tables, "tracker_mapping")
+
+            connection.prepare("SELECT `content` FROM `search_history`").use { statement ->
+                assertTrue(statement.step())
+                assertEquals("frieren", statement.getText(0))
+                assertFalse(statement.step())
+            }
+        }
+    }
+
+    @Test
     fun `MIG-04 缺失手动19-20迁移时从v16迁移到v21失败`() {
         val helper = createHelper()
         helper.createDatabase(16).use {}

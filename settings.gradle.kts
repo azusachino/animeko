@@ -146,6 +146,10 @@ includeProject(":datasource:web-base", "datasource/web/web-base") // web 基础
 includeProject(":datasource:jellyfin", "datasource/jellyfin")
 includeProject(":datasource:ikaros", "datasource/ikaros") // https://ikaros.run/
 
+// third-party progress-sync trackers (issue #3427)
+includeProject(":tracker:tracker-api", "tracker/api")
+includeProject(":tracker:tracker-anilist", "tracker/anilist") // https://anilist.co
+
 // danmaku
 includeProject(":danmaku:danmaku-ui-config", "danmaku/ui-config")
 includeProject(":danmaku:danmaku-api", "danmaku/api")

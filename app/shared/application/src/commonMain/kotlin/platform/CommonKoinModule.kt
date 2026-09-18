@@ -133,6 +133,10 @@ import me.him188.ani.app.domain.mediasource.subscription.MediaSourceSubscription
 import me.him188.ani.app.domain.session.AniSessionRefresher
 import me.him188.ani.app.domain.session.SessionManager
 import me.him188.ani.app.domain.session.SessionStateProvider
+import me.him188.ani.app.domain.tracker.TrackerManager
+import me.him188.ani.app.domain.tracker.anilist.AniListTrackerService
+import me.him188.ani.app.tracker.anilist.AniListApi
+import me.him188.ani.app.tracker.api.TrackerService
 import me.him188.ani.app.domain.settings.ProxyProvider
 import me.him188.ani.app.domain.settings.SettingsBasedProxyProvider
 import me.him188.ani.app.domain.torrent.TorrentManager
@@ -365,6 +369,21 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
             database.subjectReviews(),
         )
     }
+    single<AniListApi> {
+        AniListApi(get<HttpClientProvider>().get(ScopedHttpClientUserAgent.ANI))
+    }
+    single<AniListTrackerService> {
+        AniListTrackerService(
+            api = get(),
+            accountDao = database.trackerAccountDao(),
+        )
+    }
+    single<TrackerManager> {
+        TrackerManager(
+            trackers = listOf<TrackerService>(get<AniListTrackerService>()),
+            bindingDao = database.trackerBindingDao(),
+        )
+    }
     single<EpisodeCollectionRepository> {
         EpisodeCollectionRepository(
             subjectDao = database.subjectCollection(),
@@ -373,6 +392,7 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
             animeScheduleRepository = get(),
             subjectCollectionRepository = inject(),
             getEpisodeTypeFiltersUseCase = get(),
+            trackerManager = get(),
         )
     }
     single<EpisodeProgressRepository> {

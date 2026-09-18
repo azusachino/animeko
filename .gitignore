@@ -15,6 +15,10 @@ Podfile.lock
 # Local source files
 **/local.kt
 
+# Local working notes, not part of any PR
+/PLAN.md
+/docs/dev/trackers/
+
 # Android build outputs
 app/android/release
 app/android/debug

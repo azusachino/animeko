@@ -57,6 +57,8 @@ import me.him188.ani.app.data.repository.subject.SubjectRelationsRepository
 import me.him188.ani.app.data.models.comment.CommentReportTargetType
 import me.him188.ani.app.data.models.player.playProgressByEpisodeId
 import me.him188.ani.app.data.network.AniCommentReportService
+import me.him188.ani.app.data.persistent.database.AniDatabase
+import me.him188.ani.app.domain.tracker.anilist.AniListTrackerService
 import me.him188.ani.app.ui.comment.CommentMapperContext.parseToUIComment
 import me.him188.ani.app.ui.comment.CommentMapperContext.toCommentVoteValue
 import me.him188.ani.app.ui.comment.CommentReportState
@@ -108,6 +110,8 @@ class DefaultSubjectDetailsStateFactory : SubjectDetailsStateFactory, KoinCompon
     private val bangumiCommentRepository: BangumiCommentRepository by inject()
     private val commentReportService: AniCommentReportService by inject()
     private val setSubjectCollectionTypeOrDeleteUseCase: SetSubjectCollectionTypeOrDeleteUseCase by inject()
+    private val database: AniDatabase by inject()
+    private val aniListTrackerService: AniListTrackerService by inject()
 
     override fun create(
         subjectInfoFlow: Flow<SubjectInfo>
@@ -217,6 +221,18 @@ class DefaultSubjectDetailsStateFactory : SubjectDetailsStateFactory, KoinCompon
                 episodeCollectionRepository.setAllEpisodesWatched(subjectId)
             },
             this,
+        )
+
+        val trackerBindingDao = database.trackerBindingDao()
+        val trackerBindingState = TrackerBindingState(
+            bindingFlow = trackerBindingDao.bindingsForSubjectFlow(subjectId)
+                .map { bindings -> bindings.firstOrNull { it.trackerId == aniListTrackerService.id } },
+            trackerService = aniListTrackerService,
+            bindingDao = trackerBindingDao,
+            subjectId = subjectId,
+            initialQuery = subjectInfo.displayName,
+            backgroundScope = this,
+            trackerId = aniListTrackerService.id,
         )
 
         val editableRatingState = EditableRatingState(
@@ -382,6 +398,7 @@ class DefaultSubjectDetailsStateFactory : SubjectDetailsStateFactory, KoinCompon
                 .map { PagingData.from(it) }
                 .cachedIn(this),
             editableSubjectCollectionTypeState = editableSubjectCollectionTypeState,
+            trackerBindingState = trackerBindingState,
             editableRatingState = editableRatingState,
             subjectProgressState = subjectProgressState,
             subjectCommentState = subjectCommentState,

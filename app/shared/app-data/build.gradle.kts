@@ -68,6 +68,9 @@ kotlin {
         api(projects.danmaku.danmakuApi)
         api(projects.danmaku.dandanplay)
 
+        api(projects.tracker.trackerApi)
+        api(projects.tracker.trackerAnilist)
+
         api(libs.paging.common)
 
         implementation(libs.koin.core)
