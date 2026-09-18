@@ -28,6 +28,7 @@ import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
 import me.him188.ani.app.data.repository.subject.toEpisodeType
 import me.him188.ani.app.data.repository.subject.toUnifiedCollectionType
 import me.him188.ani.app.domain.episode.EpisodeCollections
+import me.him188.ani.app.domain.tracker.TrackerManager
 import me.him188.ani.client.models.AniEpisodeCollection
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.PackedDate
@@ -49,6 +50,7 @@ class EpisodeCollectionRepository(
     private val getEpisodeTypeFiltersUseCase: GetEpisodeTypeFiltersUseCase,
     defaultDispatcher: CoroutineContext = Dispatchers.Default,
     private val cacheExpiry: Duration = 1.hours,
+    private val trackerManager: TrackerManager? = null,
 ) : Repository(defaultDispatcher) {
 
     private val subjectCollectionRepository by subjectCollectionRepository
@@ -140,12 +142,17 @@ class EpisodeCollectionRepository(
      * 设置指定条目的所有剧集为已看.
      */
     suspend fun setAllEpisodesWatched(subjectId: Int) = withContext(defaultDispatcher) {
-        val episodeIds = subjectEpisodeCollectionInfosFlow(subjectId)
-            .first()
-            .map { it.episodeId }
+        val episodes = subjectEpisodeCollectionInfosFlow(subjectId).first()
+        val episodeIds = episodes.map { it.episodeId }
 
         episodeService.setEpisodeCollection(subjectId, episodeIds, UnifiedCollectionType.DONE)
         episodeCollectionDao.setAllEpisodesWatched(subjectId)
+
+        // 一次批量操作只同步一次给 tracker, 传入本批次里最大的集数, 而不是每集调用一次.
+        val latestSort = episodes.mapNotNull { it.episodeInfo.sort.number }.maxOrNull()
+        if (latestSort != null) {
+            trackerManager?.onEpisodeMarkedWatched(subjectId, latestSort)
+        }
     }
 
     suspend fun setEpisodeCollectionType(
@@ -161,6 +168,13 @@ class EpisodeCollectionRepository(
         }
         episodeService.setEpisodeCollection(subjectId, listOf(episodeId), collectionType)
         episodeCollectionDao.updateSelfCollectionType(subjectId, episodeId, collectionType)
+
+        if (collectionType == UnifiedCollectionType.DONE) {
+            val sort = episodeCollectionDao.findByEpisodeId(episodeId).first()?.sort?.number
+            if (sort != null) {
+                trackerManager?.onEpisodeMarkedWatched(subjectId, sort)
+            }
+        }
     }
 
     /**
