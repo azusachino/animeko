@@ -95,7 +95,7 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         TrackerBindingEntity::class, // issue #3427
         TrackerMappingEntity::class, // issue #3427
     ],
-    version = 23,
+    version = 24,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = Migrations.Migration_1_2::class),
         AutoMigration(from = 2, to = 3, spec = Migrations.Migration_2_3::class),
@@ -118,6 +118,7 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         AutoMigration(from = 20, to = 21, spec = Migrations.Migration_20_21::class),
         AutoMigration(from = 21, to = 22, spec = Migrations.Migration_21_22::class),
         AutoMigration(from = 22, to = 23, spec = Migrations.Migration_22_23::class),
+        AutoMigration(from = 23, to = 24, spec = Migrations.Migration_23_24::class),
     ],
     exportSchema = true,
 )
@@ -416,11 +417,19 @@ internal object Migrations {
     }
 
     /**
+     * Added [EpisodeCollectionEntity.imageMedium] and [EpisodeCollectionEntity.imageLarge] (TMDB 剧照直链, 可空).
+     */
+    class Migration_22_23 : AutoMigrationSpec {
+        override fun onPostMigrate(connection: SQLiteConnection) {
+        }
+    }
+
+    /**
      * 只增加了新的表: [TrackerAccountEntity], [TrackerBindingEntity], [TrackerMappingEntity].
      *
      * @since issue #3427
      */
-    class Migration_22_23 : AutoMigrationSpec {
+    class Migration_23_24 : AutoMigrationSpec {
         override fun onPostMigrate(connection: SQLiteConnection) {
         }
     }

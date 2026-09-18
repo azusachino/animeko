@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 23,
-    "identityHash": "419ef2d9531e2a1cd65a54763e6fd607",
+    "version": 24,
+    "identityHash": "7006c3722c49b11a4d574dbc162b57c9",
     "entities": [
       {
         "tableName": "search_history",
@@ -1712,11 +1712,206 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_playback_history_pending_op_episodeId` ON `${TABLE_NAME}` (`episodeId`)"
           }
         ]
+      },
+      {
+        "tableName": "tracker_account",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`trackerId` TEXT NOT NULL, `userId` INTEGER NOT NULL, `username` TEXT NOT NULL, `avatarUrl` TEXT, `accessToken` TEXT NOT NULL, `scoreFormat` TEXT NOT NULL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`trackerId`))",
+        "fields": [
+          {
+            "fieldPath": "trackerId",
+            "columnName": "trackerId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "username",
+            "columnName": "username",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "avatarUrl",
+            "columnName": "avatarUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "accessToken",
+            "columnName": "accessToken",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scoreFormat",
+            "columnName": "scoreFormat",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "trackerId"
+          ]
+        }
+      },
+      {
+        "tableName": "tracker_binding",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`subjectId` INTEGER NOT NULL, `trackerId` TEXT NOT NULL, `remoteMediaId` INTEGER NOT NULL, `remoteTitle` TEXT NOT NULL, `totalEpisodes` INTEGER, `lastTrackedEpisode` REAL NOT NULL, `episodeOffset` INTEGER NOT NULL, `status` TEXT, `score` REAL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`subjectId`, `trackerId`), FOREIGN KEY(`subjectId`) REFERENCES `subject_collection`(`subjectId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "subjectId",
+            "columnName": "subjectId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trackerId",
+            "columnName": "trackerId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "remoteMediaId",
+            "columnName": "remoteMediaId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "remoteTitle",
+            "columnName": "remoteTitle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalEpisodes",
+            "columnName": "totalEpisodes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastTrackedEpisode",
+            "columnName": "lastTrackedEpisode",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "episodeOffset",
+            "columnName": "episodeOffset",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "score",
+            "columnName": "score",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "subjectId",
+            "trackerId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "subject_collection",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "subjectId"
+            ],
+            "referencedColumns": [
+              "subjectId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "tracker_mapping",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bangumiId` INTEGER NOT NULL, `site` TEXT NOT NULL, `externalId` TEXT NOT NULL, `subscriptionId` TEXT NOT NULL, PRIMARY KEY(`bangumiId`, `site`))",
+        "fields": [
+          {
+            "fieldPath": "bangumiId",
+            "columnName": "bangumiId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "site",
+            "columnName": "site",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "externalId",
+            "columnName": "externalId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subscriptionId",
+            "columnName": "subscriptionId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bangumiId",
+            "site"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_tracker_mapping_site_externalId",
+            "unique": false,
+            "columnNames": [
+              "site",
+              "externalId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tracker_mapping_site_externalId` ON `${TABLE_NAME}` (`site`, `externalId`)"
+          },
+          {
+            "name": "index_tracker_mapping_subscriptionId_site",
+            "unique": false,
+            "columnNames": [
+              "subscriptionId",
+              "site"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tracker_mapping_subscriptionId_site` ON `${TABLE_NAME}` (`subscriptionId`, `site`)"
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '419ef2d9531e2a1cd65a54763e6fd607')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7006c3722c49b11a4d574dbc162b57c9')"
     ]
   }
 }

@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -62,6 +63,7 @@ import me.him188.ani.app.data.models.preference.parseMpvOptions
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.SubjectProgressInfo
 import me.him188.ani.app.data.models.subject.nameCnOrName
+import me.him188.ani.app.data.models.player.playProgressByEpisodeId
 import me.him188.ani.app.data.network.AniCommentReportService
 import me.him188.ani.app.data.network.AutoSkipRepository
 import me.him188.ani.app.data.repository.RepositoryServiceUnavailableException
@@ -69,6 +71,7 @@ import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.data.repository.episode.EpisodeCommentRepository
 import me.him188.ani.app.data.repository.media.SelectorMediaSourceEpisodeCacheRepository
 import me.him188.ani.app.data.repository.player.DanmakuRegexFilterRepository
+import me.him188.ani.app.data.repository.player.EpisodePlayHistoryRepository
 import me.him188.ani.app.data.repository.subject.SetSubjectCollectionTypeOrDeleteUseCase
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.comment.PostCommentUseCase
@@ -88,6 +91,7 @@ import me.him188.ani.app.domain.episode.infoBundleFlow
 import me.him188.ani.app.domain.episode.infoLoadErrorFlow
 import me.him188.ani.app.domain.episode.mediaSelectorFlow
 import me.him188.ani.app.domain.foundation.LoadError
+import me.him188.ani.app.domain.media.DroppedFileMedia
 import me.him188.ani.app.domain.media.cache.EpisodeCacheStatus
 import me.him188.ani.app.domain.media.download.MediaDownloadManager
 import me.him188.ani.app.domain.media.fetch.MediaSourceManager
@@ -188,6 +192,7 @@ import me.him188.ani.utils.coroutines.flows.flowOfEmptyList
 import me.him188.ani.utils.coroutines.flows.flowOfNull
 import me.him188.ani.utils.coroutines.flows.restartable
 import me.him188.ani.utils.coroutines.sampleWithInitial
+import me.him188.ani.utils.io.SystemPath
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.warn
 import me.him188.ani.utils.platform.annotations.TestOnly
@@ -282,6 +287,7 @@ class EpisodeViewModel(
     private val danmakuRepository: DanmakuRepository by inject()
     private val settingsRepository: SettingsRepository by inject()
     private val danmakuRegexFilterRepository: DanmakuRegexFilterRepository by inject()
+    private val episodePlayHistoryRepository: EpisodePlayHistoryRepository by inject()
     private val mediaSourceManager: MediaSourceManager by inject()
     private val episodeCommentRepository: EpisodeCommentRepository by inject()
     private val commentReportService: AniCommentReportService by inject()
@@ -547,9 +553,18 @@ class EpisodeViewModel(
             }
         }.produceState(emptyList())
 
+        // 只订阅本条目剧集的播放记录, 换算成按剧集 id 索引的进度
+        val playProgressByEpisodeId by episodeCollectionsFlow
+            .map { list -> list.map { it.episodeId } }
+            .distinctUntilChanged()
+            .flatMapLatest { episodeIds -> episodePlayHistoryRepository.flowByEpisodeIds(episodeIds) }
+            .map { it.playProgressByEpisodeId() }
+            .produceState(emptyMap())
+
         val collectionButtonEnabled = MutableStateFlow(false)
         EpisodeCarouselState(
             episodes = episodeCollectionsFlow.produceState(emptyList()),
+            playProgress = { playProgressByEpisodeId[it.episodeId] },
             playingEpisode = episodeIdFlow.combine(episodeCollectionsFlow) { id, collections ->
                 collections.firstOrNull { it.episodeId == id }
             }.produceState(null),
@@ -1082,7 +1097,9 @@ class EpisodeViewModel(
                 ?.mediaSelector
                 ?.selected
                 ?.firstOrNull()
-            val mediaSourceId = selected?.mediaSourceId ?: return@launchInBackground
+            // 拖入的本地文件不对应任何数据源, 其时间轴不应计入该剧集的跳过统计
+            if (selected == null || DroppedFileMedia.isDroppedFile(selected)) return@launchInBackground
+            val mediaSourceId = selected.mediaSourceId
             val timeSeconds = (currentPositionMillis / 1000).toInt()
             if (timeSeconds < 0 || timeSeconds > 200 * 60) {
                 logger.warn {
@@ -1105,6 +1122,27 @@ class EpisodeViewModel(
             // 手动刷新单个源: 只清除该源的搜索缓存, 让它真正重新搜索, 不影响其他源的缓存
             selectorEpisodeCacheRepository.clearByRequestedSubjectAndSource(subjectId, result.mediaSourceId)
             result.restart()
+        }
+    }
+
+    /**
+     * 在当前剧集播放用户拖入的本地视频文件 [file], 不经过数据源选择.
+     *
+     * 只对当前剧集的本次播放有效: 不更新数据源偏好, 之后仍可在数据源选择器中换回其他资源;
+     * 切换剧集或重新进入播放页后照常自动选择数据源. 若剧集信息加载完成前切换了剧集, 则放弃播放.
+     */
+    fun playDroppedFile(file: SystemPath) {
+        launchInBackground {
+            val session = fetchPlayState.episodeSessionFlow.value
+            val mediaSelector = fetchPlayState.episodeSessionFlow
+                .mapLatest { current ->
+                    if (current !== session) return@mapLatest null
+                    current.fetchSelectFlow.filterNotNull().first().mediaSelector
+                }
+                .first()
+                ?: return@launchInBackground
+            logger.info { "Playing dropped file: $file" }
+            mediaSelector.selectTemporarily(DroppedFileMedia.create(file))
         }
     }
 
