@@ -20,14 +20,17 @@ import kotlinx.coroutines.flow.map
 import me.him188.ani.utils.platform.annotations.TestOnly
 
 /**
- * Bangumi 条目到某个远程站点 ID 的映射, 来自 `bangumi-data` 订阅 (见 [TrackerMappingSubscription]).
- * [site] 使用 bangumi-data 自身的站点 key (例如 `"aniList"`, `"mal"`), 不与 [me.him188.ani.app.tracker.api.TrackerService.id] 强制一致,
+ * Bangumi 条目到某个远程站点 ID 的映射, 来自 `bangumi-data` 订阅.
+ * [site] 使用 bangumi-data 自身的站点 key (例如 `"aniList"`, `"mal"`), 不强制与 tracker 自身 ID 一致,
  * 由 tracker 实现自行映射.
  */
 @Entity(
     tableName = "tracker_mapping",
     primaryKeys = ["bangumiId", "site"],
-    indices = [Index(value = ["site", "externalId"])],
+    indices = [
+        Index(value = ["site", "externalId"]),
+        Index(value = ["subscriptionId", "site"]),
+    ],
 )
 data class TrackerMappingEntity(
     val bangumiId: Int,
@@ -56,8 +59,16 @@ interface TrackerMappingDao {
     @Query("DELETE FROM tracker_mapping WHERE bangumiId = :bangumiId AND site = :site")
     suspend fun deleteMapping(bangumiId: Int, site: String)
 
-    @Query("DELETE FROM tracker_mapping WHERE subscriptionId = :subscriptionId AND bangumiId NOT IN (:keepBangumiIds)")
-    suspend fun deleteStale(subscriptionId: String, keepBangumiIds: Collection<Int>)
+    /**
+     * 删除 [subscriptionId] 在 [site] 下, [bangumiId][TrackerMappingEntity.bangumiId] 不在 [keepBangumiIds]
+     * 中的行. 按 (subscriptionId, site) 而非只按 subscriptionId 过滤, 因为一次订阅刷新会同时覆盖多个 site,
+     * 同一 bangumiId 在另一 site 下仍然有效时不应影响本 site 的清理.
+     */
+    @Query(
+        "DELETE FROM tracker_mapping WHERE subscriptionId = :subscriptionId AND site = :site " +
+            "AND bangumiId NOT IN (:keepBangumiIds)",
+    )
+    suspend fun deleteStale(subscriptionId: String, site: String, keepBangumiIds: Collection<Int>)
 }
 
 @TestOnly
@@ -97,9 +108,9 @@ fun createMemoryTrackerMappingDao(): TrackerMappingDao {
             store.value = store.value.filterNot { it.bangumiId == bangumiId && it.site == site }
         }
 
-        override suspend fun deleteStale(subscriptionId: String, keepBangumiIds: Collection<Int>) {
+        override suspend fun deleteStale(subscriptionId: String, site: String, keepBangumiIds: Collection<Int>) {
             store.value = store.value.filterNot {
-                it.subscriptionId == subscriptionId && it.bangumiId !in keepBangumiIds
+                it.subscriptionId == subscriptionId && it.site == site && it.bangumiId !in keepBangumiIds
             }
         }
     }

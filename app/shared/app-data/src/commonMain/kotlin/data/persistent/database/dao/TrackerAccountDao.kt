@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.map
 import me.him188.ani.utils.platform.annotations.TestOnly
 
 /**
- * 已授权的第三方 tracker 账号. [trackerId] 例如 `"anilist"`, 与 [me.him188.ani.app.tracker.api.TrackerService.id] 一致.
+ * 已授权的第三方 tracker 账号. [trackerId] 例如 `"anilist"`, 与 tracker 实现自身的 ID 一致.
  */
 @Entity(tableName = "tracker_account")
 data class TrackerAccountEntity(

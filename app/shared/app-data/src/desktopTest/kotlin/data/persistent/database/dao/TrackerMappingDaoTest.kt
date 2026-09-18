@@ -61,7 +61,7 @@ class TrackerMappingDaoTest {
     }
 
     @Test
-    fun `TRK-04 deleteStale只删除指定subscription中不在保留集合的行`() = runDatabaseTest { database ->
+    fun `TRK-04 deleteStale只删除指定subscription加site中不在保留集合的行`() = runDatabaseTest { database ->
         val dao = database.trackerMappingDao()
         dao.upsertMappings(
             listOf(
@@ -71,10 +71,29 @@ class TrackerMappingDaoTest {
             ),
         )
 
-        dao.deleteStale("sub-a", keepBangumiIds = listOf(400602))
+        dao.deleteStale("sub-a", site = "aniList", keepBangumiIds = listOf(400602))
 
         assertEquals("1", dao.getMapping(400602, "aniList")?.externalId)
         assertNull(dao.getMapping(9, "aniList"))
         assertEquals("3", dao.getMapping(1, "aniList")?.externalId) // sub-b 不受影响
+    }
+
+    @Test
+    fun `TRK-04 deleteStale按site隔离, 同一bangumiId在其他site的行不受影响`() = runDatabaseTest { database ->
+        val dao = database.trackerMappingDao()
+        // 一次 bangumi-data 刷新同时覆盖多个 site: bangumiId=400602 在 aniList 和 mal 下都有映射,
+        // 刷新后 mal 的映射消失 (远程不再提供), 但 aniList 的映射仍然有效.
+        dao.upsertMappings(
+            listOf(
+                TrackerMappingEntity(400602, "aniList", "1", subscriptionId = "sub-a"),
+                TrackerMappingEntity(400602, "mal", "2", subscriptionId = "sub-a"),
+            ),
+        )
+
+        // mal 侧刷新结果中已经没有 400602 了
+        dao.deleteStale("sub-a", site = "mal", keepBangumiIds = emptyList())
+
+        assertNull(dao.getMapping(400602, "mal"))
+        assertEquals("1", dao.getMapping(400602, "aniList")?.externalId) // aniList 不受影响
     }
 }

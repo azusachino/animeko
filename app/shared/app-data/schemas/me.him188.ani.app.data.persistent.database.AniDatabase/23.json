@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 23,
-    "identityHash": "2e5fc28f45816f052d9fff291fddf095",
+    "identityHash": "ddc826eb5c4482c4ba808ca7670f614e",
     "entities": [
       {
         "tableName": "search_history",
@@ -1885,13 +1885,23 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_tracker_mapping_site_externalId` ON `${TABLE_NAME}` (`site`, `externalId`)"
+          },
+          {
+            "name": "index_tracker_mapping_subscriptionId_site",
+            "unique": false,
+            "columnNames": [
+              "subscriptionId",
+              "site"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_tracker_mapping_subscriptionId_site` ON `${TABLE_NAME}` (`subscriptionId`, `site`)"
           }
         ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2e5fc28f45816f052d9fff291fddf095')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ddc826eb5c4482c4ba808ca7670f614e')"
     ]
   }
 }
