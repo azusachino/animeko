@@ -43,12 +43,12 @@ class AniListApi(
         ).page.media
     }
 
-    suspend fun getMediaEntry(mediaId: Int, accessToken: String): AniListMedia? {
-        return execute<SearchAnimeData>(
+    suspend fun getMediaEntry(mediaId: Int, accessToken: String): AniListMediaWithEntry? {
+        return execute<MediaEntryData>(
             query = GET_MEDIA_ENTRY_QUERY,
             variables = buildJsonObject { put("id", mediaId) },
             accessToken = accessToken,
-        ).page.media.firstOrNull()
+        ).media
     }
 
     suspend fun saveMediaListEntry(
@@ -119,14 +119,17 @@ class AniListApi(
 
         val GET_MEDIA_ENTRY_QUERY = """
             query GetMediaEntry(${'$'}id: Int) {
-              Page(page: 1, perPage: 1) {
-                media(id: ${'$'}id, type: ANIME) {
-                  id
-                  title { romaji english native }
-                  coverImage { large }
-                  episodes
+              Media(id: ${'$'}id, type: ANIME) {
+                id
+                title { romaji english native }
+                coverImage { large }
+                episodes
+                status
+                format
+                mediaListEntry {
                   status
-                  format
+                  score(format: POINT_10_DECIMAL)
+                  progress
                 }
               }
             }

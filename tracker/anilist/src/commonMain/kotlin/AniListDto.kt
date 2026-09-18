@@ -74,6 +74,27 @@ data class AniListMediaTitle(
 data class AniListCoverImage(val large: String? = null)
 
 @Serializable
+internal data class MediaEntryData(@SerialName("Media") val media: AniListMediaWithEntry?)
+
+@Serializable
+data class AniListMediaWithEntry(
+    val id: Int,
+    val title: AniListMediaTitle,
+    val coverImage: AniListCoverImage? = null,
+    val episodes: Int? = null,
+    val status: String? = null,
+    val format: String? = null,
+    val mediaListEntry: AniListMediaListEntryRef? = null,
+)
+
+@Serializable
+data class AniListMediaListEntryRef(
+    val status: String? = null,
+    val score: Double? = null,
+    val progress: Int? = null,
+)
+
+@Serializable
 internal data class SaveMediaListEntryData(@SerialName("SaveMediaListEntry") val entry: AniListMediaListEntry)
 
 @Serializable

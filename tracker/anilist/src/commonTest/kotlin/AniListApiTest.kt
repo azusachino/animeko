@@ -109,6 +109,45 @@ class AniListApiTest {
     }
 
     @Test
+    fun `TRK-07 getMediaEntry解析出mediaListEntry的当前进度`() = runTest {
+        val api = createApi {
+            respondJson(
+                """
+                {
+                  "data": {
+                    "Media": {
+                      "id": 1,
+                      "title": { "romaji": "Sousou no Frieren", "english": "Frieren", "native": null },
+                      "coverImage": null,
+                      "episodes": 28,
+                      "status": "FINISHED",
+                      "format": "TV",
+                      "mediaListEntry": { "status": "CURRENT", "score": 8.5, "progress": 12 }
+                    }
+                  }
+                }
+                """.trimIndent(),
+            )
+        }
+
+        val entry = api.getMediaEntry(mediaId = 1, accessToken = "token-abc")
+
+        assertEquals(12, entry?.mediaListEntry?.progress)
+        assertEquals("CURRENT", entry?.mediaListEntry?.status)
+    }
+
+    @Test
+    fun `TRK-07 getMediaEntry在Media为null时返回null`() = runTest {
+        val api = createApi {
+            respondJson("""{"data": {"Media": null}}""")
+        }
+
+        val entry = api.getMediaEntry(mediaId = 999999, accessToken = "token-abc")
+
+        assertNull(entry)
+    }
+
+    @Test
     fun `TRK-08 saveMediaListEntry请求体只包含四个字段`() = runTest {
         var capturedBody: String? = null
         val api = createApi { request ->
