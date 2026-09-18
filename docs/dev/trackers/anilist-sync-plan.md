@@ -64,7 +64,7 @@ fun UnifiedCollectionType.toAniListStatus(): String? = when (this) {
 }
 ```
 
-- [ ] **TRK-00**: `UnifiedCollectionType.toAniListStatus()` / its inverse round-trip for every enum value including
+- [x] **TRK-00**: `UnifiedCollectionType.toAniListStatus()` / its inverse round-trip for every enum value including
   `NOT_COLLECTED -> null -> (no-op, never synced)`. Pure function, trivial table test, but write it before the
   hooks in PR 2 depend on it — it's the one piece of PR 1 with real branching logic.
 
@@ -122,15 +122,20 @@ new tables, no column changes to existing ones), which is the cheapest case Room
 Export the new schema JSON (`app/shared/app-data/schemas/.../23.json`) via the project's existing schema-export
 Gradle task, same as every prior version bump.
 
-- [ ] **TRK-01** (`AniDatabaseMigrationTest`-style, `desktopTest`, using `MigrationTestHelper` exactly like
-  `MIG-01`): build a v22 database, run the migration to v23, assert `tracker_account`, `tracker_binding`,
-  `tracker_mapping` all exist with their expected columns, and assert a pre-existing `subject_collection` row
-  survives the migration untouched.
-- [ ] **TRK-02**: `TrackerAccountDao` insert-then-get round-trip (`commonTest`, in-memory Room DB).
-- [ ] **TRK-03**: `TrackerBindingDao` — insert, `getBindingsForSubject`, and cascade-delete when the parent
+- [x] **TRK-01** (`MIG-06` in `AniDatabaseMigrationTest`, `desktopTest`, using `MigrationTestHelper` exactly like
+  `MIG-01`): builds a v22 database, runs the migration to v23, asserts `tracker_account`, `tracker_binding`,
+  `tracker_mapping` all exist, and a pre-existing `search_history` row survives untouched (not
+  `subject_collection` — that table has ~30 NOT NULL columns with no defaults, `search_history` is what `MIG-01`
+  already uses for this exact "existing data survives" check).
+- [x] **TRK-02**: `TrackerAccountDao` insert-then-get round-trip (`desktopTest`, in-memory Room DB).
+- [x] **TRK-03**: `TrackerBindingDao` — insert, `getBindingsForSubject`, and cascade-delete when the parent
   `SubjectCollectionEntity` row is removed (verifies the `ForeignKey.CASCADE`).
-- [ ] **TRK-04**: `TrackerMappingDao` — upsert semantics (re-inserting the same `(bangumiId, site)` pair updates
-  `externalId` rather than erroring), and a query by `site` returns only that site's rows.
+- [x] **TRK-04**: `TrackerMappingDao` — upsert semantics (re-inserting the same `(bangumiId, site)` pair updates
+  `externalId` rather than erroring), and a query by `site` returns only that site's rows. `deleteStale` is scoped
+  by `(subscriptionId, site)`, not `subscriptionId` alone, because a single `bangumi-data` refresh covers multiple
+  sites per `bangumiId`: scoping by subscription alone would never prune a stale mapping for one site while
+  another site's mapping for the same `bangumiId` stayed valid. `tracker_mapping` carries a matching
+  `(subscriptionId, site)` index.
 
 ### 3.3 Rate limiting
 
@@ -150,11 +155,13 @@ val AniListRateLimit = createClientPlugin("AniListRateLimit") {
 }
 ```
 
-- [ ] **TRK-05**: using Ktor's `MockEngine`, fire 26 requests in a tight loop against a client installed with
-  `AniListRateLimit`; assert the 26th request's completion is delayed until inside the next window, and the
-  first 25 are not delayed. This is the one test in this plan that's about *timing*, not just data — use a
-  virtual/test clock (`kotlinx-coroutines-test`'s `TestScope`/`runTest`), not real `delay()`, so it doesn't
-  make the test suite slow.
+- [x] **TRK-05**: `RateLimiter` is tested directly (not through Ktor's `MockEngine`) — a fixed-window semaphore
+  driven entirely by `delay()`, with no system-clock reads, so `kotlinx-coroutines-test`'s virtual time drives it
+  correctly and quickly. Fires 25+1 concurrent `acquire()` calls under `runTest`, asserts the first 25 complete
+  without advancing time and the 26th only completes after `advanceTimeBy(window)`. `AniListRateLimit` is a thin
+  Ktor client plugin wrapping the same class. Background refill loops in tests must be launched in `runTest`'s
+  `backgroundScope`, not the test's own scope, since `runTest` waits for every coroutine in its own scope to
+  finish and an intentionally-infinite loop never does.
 
 ### 3.4 AniList GraphQL client
 
@@ -163,17 +170,19 @@ Apollo Kotlin or other GraphQL codegen library. Justification: exactly four fixe
 `SearchAnime`, `GetMediaEntry`, `SaveMediaListEntry`), and this codebase has zero existing GraphQL precedent to
 amortize a codegen toolchain's setup cost against.
 
-- [ ] **TRK-06**: `ViewerProfile` query — `MockEngine` returns a canned success JSON, assert the parsed
-  `AniListViewer` matches, and assert the request carries `Authorization: Bearer <token>`.
-- [ ] **TRK-07**: `SearchAnime` query — canned multi-result JSON parses into the right number of
-  `TrackerMediaSummary`, titles/episode counts/format map correctly.
-- [ ] **TRK-08**: `SaveMediaListEntry` mutation — request body contains exactly `mediaId`, `status`, `score`,
-  `progress` (no extra fields), and a non-2xx / GraphQL `errors[]` response surfaces as a typed failure, not a
-  silently-swallowed one.
-- [ ] **TRK-09**: token-expiry short-circuit — given a `TrackerAccountEntity` whose `updatedAtMillis` is more
-  than 365 days old (mirroring Mihon's `ALOAuth.isExpired()` assumption, since AniList's implicit-grant response
-  carries no real `expires_in`), `AniListTrackerService.isAuthorized()` returns `false` **without** making a
-  network call — assert on the `MockEngine`'s captured-request count being zero.
+- [x] **TRK-06**: `ViewerProfile` query — `MockEngine` returns a canned success JSON, asserts the parsed
+  `AniListViewer` matches, and asserts the request carries `Authorization: Bearer <token>`.
+- [x] **TRK-07**: `SearchAnime` query — canned multi-result JSON parses into the right number of `AniListMedia`,
+  titles/episode counts/format map correctly, including entries with null optional fields.
+- [x] **TRK-08**: `SaveMediaListEntry` mutation — request body's `variables` object contains exactly `mediaId`,
+  `status`, `score`, `progress` (no extra fields), and a GraphQL `errors[]` response throws
+  `AniListGraphQLException` rather than silently returning null data.
+- [x] **TRK-09**: `isAniListTokenLikelyExpired(updatedAtMillis, nowMillis)` is a pure function in `tracker:anilist`
+  (no DAO access) that returns `true` once more than the assumed 365-day AniList token lifetime has passed
+  (mirroring Mihon's `ALOAuth.isExpired()` assumption, since AniList's implicit-grant response carries no real
+  `expires_in`). The full `AniListTrackerService.isAuthorized()` wiring against `TrackerAccountDao` belongs to
+  PR 2, once `app-data` actually depends on `tracker:anilist` for the login flow — building it earlier would mean
+  guessing at that wiring before its real consumer exists.
 
 ## 4. PR 2 — login and bind-and-sync
 

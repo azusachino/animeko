@@ -30,11 +30,12 @@
 
 ## PR Roadmap
 
-### [ ] PR 1 — Module scaffold, DB schema, AniList API client (no UI, fully unit-tested)
-- `tracker:api` + `tracker:anilist` Gradle modules (mirrors the existing `datasource:api` / `datasource:bangumi` split).
-- `TrackerAccountEntity`, `TrackerBindingEntity`, `TrackerMappingEntity` in `AniDatabase` v22 → v23 (`AutoMigration`, purely additive).
-- `AniListRateLimitPlugin` (Ktor `HttpClient` plugin, 25 req/min — Mihon's proven margin under AniList's 90/min cap).
-- Hand-rolled AniList GraphQL client: `ViewerProfile`, `SearchAnime`, `GetMediaEntry`, `SaveMediaListEntry`.
+### [x] PR 1 — Module scaffold, DB schema, AniList API client (no UI, fully unit-tested)
+- [x] `tracker:api` + `tracker:anilist` Gradle modules (mirrors the existing `datasource:api` / `datasource:bangumi` split).
+- [x] `TrackerAccountEntity`, `TrackerBindingEntity`, `TrackerMappingEntity` in `AniDatabase` v22 → v23 (`AutoMigration`, purely additive).
+- [x] `AniListRateLimitPlugin` (Ktor `HttpClient` plugin, 25 req/min — Mihon's proven margin under AniList's 90/min cap).
+- [x] Hand-rolled AniList GraphQL client: `ViewerProfile`, `SearchAnime`, `GetMediaEntry`, `SaveMediaListEntry`.
+- Not yet built (belongs with PR 2's login flow, needs `app-data` → `tracker:anilist` wiring that doesn't exist until then): the concrete `TrackerService` implementation and `isAuthorized()`. `tracker:anilist` currently exposes the token-expiry check as a pure function (`isAniListTokenLikelyExpired`) for that future implementation to call.
 
 ### [ ] PR 2 — Login and bind-and-sync (the actual user-visible feature)
 - AniList PIN-flow login UI + state machine, Settings "Trackers" card.
