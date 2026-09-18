@@ -29,6 +29,7 @@
     - [下载管理](code/media/media-downloads.md)
     - [代码地图](code/media/media-code-map.md)
 - [图片验证码自动识别](code/image-captcha.md)
+- [第三方追踪服务 (Trackers) / AniList 同步](../dev/trackers/anilist-sync-plan.md)
 
 > 以上文档除有标注外为人工编写。
 > 其他部分文档可以参考 DeepWiki (AI)（有很高正确性）：<https://deepwiki.com/open-ani/animeko>
