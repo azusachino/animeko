@@ -47,6 +47,12 @@ import me.him188.ani.app.data.persistent.database.dao.SubjectRelationsDao
 import me.him188.ani.app.data.persistent.database.dao.SubjectReviewDao
 import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoDao
 import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoEntity
+import me.him188.ani.app.data.persistent.database.dao.TrackerAccountDao
+import me.him188.ani.app.data.persistent.database.dao.TrackerAccountEntity
+import me.him188.ani.app.data.persistent.database.dao.TrackerBindingDao
+import me.him188.ani.app.data.persistent.database.dao.TrackerBindingEntity
+import me.him188.ani.app.data.persistent.database.dao.TrackerMappingDao
+import me.him188.ani.app.data.persistent.database.dao.TrackerMappingEntity
 import me.him188.ani.app.data.persistent.database.dao.WebSearchSessionCacheDao
 import me.him188.ani.app.data.persistent.database.dao.WebSearchSessionCacheEntity
 import me.him188.ani.app.data.persistent.database.entity.CharacterActorEntity
@@ -84,8 +90,12 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         PreferredWebMediaSource::class,
         PlaybackHistoryRecordEntity::class,
         PlaybackHistoryPendingOpEntity::class,
+
+        TrackerAccountEntity::class, // issue #3427
+        TrackerBindingEntity::class, // issue #3427
+        TrackerMappingEntity::class, // issue #3427
     ],
-    version = 22,
+    version = 23,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = Migrations.Migration_1_2::class),
         AutoMigration(from = 2, to = 3, spec = Migrations.Migration_2_3::class),
@@ -107,6 +117,7 @@ import me.him188.ani.utils.httpdownloader.DownloadState
         AutoMigration(from = 18, to = 19, spec = Migrations.Migration_18_19::class),
         AutoMigration(from = 20, to = 21, spec = Migrations.Migration_20_21::class),
         AutoMigration(from = 21, to = 22, spec = Migrations.Migration_21_22::class),
+        AutoMigration(from = 22, to = 23, spec = Migrations.Migration_22_23::class),
     ],
     exportSchema = true,
 )
@@ -156,6 +167,13 @@ abstract class AniDatabase : RoomDatabase() {
     abstract fun danmakuDao(): DanmakuDao
     abstract fun preferredWebMediaSourceDao(): PreferredWebMediaSourceDao
     abstract fun playbackHistoryDao(): PlaybackHistoryDao
+
+    /**
+     * @since issue #3427
+     */
+    abstract fun trackerAccountDao(): TrackerAccountDao
+    abstract fun trackerBindingDao(): TrackerBindingDao
+    abstract fun trackerMappingDao(): TrackerMappingDao
 }
 
 expect object AniDatabaseConstructor : RoomDatabaseConstructor<AniDatabase> {
@@ -393,6 +411,16 @@ internal object Migrations {
     @DeleteTable("web_search_episode")
     @DeleteTable("web_search_subject")
     class Migration_21_22 : AutoMigrationSpec {
+        override fun onPostMigrate(connection: SQLiteConnection) {
+        }
+    }
+
+    /**
+     * 只增加了新的表: [TrackerAccountEntity], [TrackerBindingEntity], [TrackerMappingEntity].
+     *
+     * @since issue #3427
+     */
+    class Migration_22_23 : AutoMigrationSpec {
         override fun onPostMigrate(connection: SQLiteConnection) {
         }
     }
