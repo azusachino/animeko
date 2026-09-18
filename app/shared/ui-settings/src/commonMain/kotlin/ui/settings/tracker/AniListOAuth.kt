@@ -13,11 +13,11 @@ package me.him188.ani.app.ui.settings.tracker
  * AniList Auth PIN 登录: 打开系统浏览器让用户在 AniList 官方页面授权, 授权页展示一个 token 让用户手动
  * 复制粘贴回 App -- 没有 redirect handling, 见 `docs/dev/trackers/anilist-sync-plan.md` 4.1.
  *
- * TODO: 这个 fork 还没有在 https://anilist.co/settings/developer 注册自己的 AniList OAuth application,
- * 所以这里先用一个占位 client_id. 在真正让用户使用这个登录流程之前, 必须换成注册后拿到的真实 client_id
- * (client_id 本身是公开的, 写在客户端代码里没有安全问题, 但占位值显然打不开真实的 AniList 授权页).
+ * 对应 AniList OAuth application (https://anilist.co/settings/developer) 的 redirect URL 需设为
+ * `https://anilist.co/api/v2/oauth/pin` -- AniList 自带的展示页, 不指向本项目的任何地址.
+ * client_id 本身是公开的, 写在客户端代码里没有安全问题.
  */
-internal const val ANILIST_OAUTH_CLIENT_ID = "TODO_REGISTER_ANILIST_OAUTH_APP"
+internal const val ANILIST_OAUTH_CLIENT_ID = "51393"
 
 internal val ANILIST_AUTHORIZE_URL =
     "https://anilist.co/api/v2/oauth/authorize?client_id=$ANILIST_OAUTH_CLIENT_ID&response_type=token"
