@@ -1048,6 +1048,14 @@
     <string name="settings_account_profile_not_bound">未绑定</string>
     <string name="settings_account_profile_unbind">解绑</string>
     <string name="settings_account_profile_unbind_bangumi_confirmation">确定要解绑 Bangumi 吗？解绑后将不再同步观看记录到 Bangumi。解绑后可以重新绑定。</string>
+    <string name="settings_tracker_group_title">第三方追踪服务</string>
+    <string name="settings_tracker_anilist_not_connected">未连接</string>
+    <string name="settings_tracker_anilist_connect">连接</string>
+    <string name="settings_tracker_anilist_disconnect">断开连接</string>
+    <string name="settings_tracker_anilist_paste_token_title">粘贴 AniList Token</string>
+    <string name="settings_tracker_anilist_paste_token_hint">浏览器已打开 AniList 授权页面，复制页面上显示的 token，粘贴到这里完成连接。</string>
+    <string name="settings_tracker_anilist_validating">正在验证…</string>
+    <string name="settings_tracker_anilist_login_failed">连接 AniList 失败，请确认粘贴了完整的 token 后重试。</string>
     <string name="settings_account_profile_select_avatar">选择头像</string>
     <string name="settings_account_profile_done">完成</string>
     <string name="settings_account_profile_upload_avatar">上传头像</string>

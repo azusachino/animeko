@@ -1008,6 +1008,14 @@
     <string name="settings_account_profile_not_bound">Not Bound</string>
     <string name="settings_account_profile_unbind">Unbind</string>
     <string name="settings_account_profile_unbind_bangumi_confirmation">Unbind Bangumi? Watch history will no longer sync to Bangumi. You can bind it again later.</string>
+    <string name="settings_tracker_group_title">Trackers</string>
+    <string name="settings_tracker_anilist_not_connected">Not Connected</string>
+    <string name="settings_tracker_anilist_connect">Connect</string>
+    <string name="settings_tracker_anilist_disconnect">Disconnect</string>
+    <string name="settings_tracker_anilist_paste_token_title">Paste AniList Token</string>
+    <string name="settings_tracker_anilist_paste_token_hint">A browser tab just opened to AniList\'s authorization page. Copy the token it shows you, then paste it here to finish connecting.</string>
+    <string name="settings_tracker_anilist_validating">Validating…</string>
+    <string name="settings_tracker_anilist_login_failed">Couldn\'t connect to AniList. Check that you pasted the whole token and try again.</string>
     <string name="settings_account_profile_select_avatar">Select Avatar</string>
     <string name="settings_account_profile_done">Done</string>
     <string name="settings_account_profile_upload_avatar">Upload Avatar</string>

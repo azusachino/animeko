@@ -174,6 +174,7 @@ import me.him188.ani.app.ui.settings.tabs.media.source.rememberMediaSourceSelect
 import me.him188.ani.app.ui.settings.tabs.network.ConfigureProxyGroup
 import me.him188.ani.app.ui.settings.tabs.network.ServerSelectionGroup
 import me.him188.ani.app.ui.settings.tabs.theme.ThemeGroup
+import me.him188.ani.app.ui.settings.tracker.TrackerGroup
 import me.him188.ani.utils.platform.hasScrollingBug
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
@@ -338,13 +339,16 @@ fun SettingsScreen(
                         tabModifier,
                     ) {
                         when (currentTab) {
-                            SettingsTab.PROFILE -> ProfileGroup(
-                                onNavigateToEmail = onNavigateToEmailLogin,
-                                onNavigateToBangumiSync = {
-                                    navigateTo(DetailPaneRoutes.BangumiSync)
-                                },
-                                onNavigateToBangumiOAuth = onNavigateToBangumiOAuth,
-                            )
+                            SettingsTab.PROFILE -> {
+                                ProfileGroup(
+                                    onNavigateToEmail = onNavigateToEmailLogin,
+                                    onNavigateToBangumiSync = {
+                                        navigateTo(DetailPaneRoutes.BangumiSync)
+                                    },
+                                    onNavigateToBangumiOAuth = onNavigateToBangumiOAuth,
+                                )
+                                TrackerGroup()
+                            }
 
                             SettingsTab.APPEARANCE -> AppearanceGroup(vm.uiSettings)
                             SettingsTab.THEME -> ThemeGroup(vm.themeSettings)

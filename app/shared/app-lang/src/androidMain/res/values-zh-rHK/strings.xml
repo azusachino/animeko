@@ -1021,6 +1021,14 @@
     <string name="settings_account_profile_not_bound">未綁定</string>
     <string name="settings_account_profile_unbind">解除綁定</string>
     <string name="settings_account_profile_unbind_bangumi_confirmation">確定要解除綁定 Bangumi 嗎？解除綁定後將不再同步觀看記錄到 Bangumi。之後可以重新綁定。</string>
+    <string name="settings_tracker_group_title">第三方追蹤服務</string>
+    <string name="settings_tracker_anilist_not_connected">未連接</string>
+    <string name="settings_tracker_anilist_connect">連接</string>
+    <string name="settings_tracker_anilist_disconnect">中斷連接</string>
+    <string name="settings_tracker_anilist_paste_token_title">貼上 AniList Token</string>
+    <string name="settings_tracker_anilist_paste_token_hint">瀏覽器已開啟 AniList 授權頁面，複製頁面上顯示的 token，貼到這裡完成連接。</string>
+    <string name="settings_tracker_anilist_validating">正在驗證…</string>
+    <string name="settings_tracker_anilist_login_failed">連接 AniList 失敗，請確認貼上了完整的 token 後重試。</string>
     <string name="settings_account_profile_select_avatar">選擇頭像</string>
     <string name="settings_account_profile_done">完成</string>
     <string name="settings_account_profile_upload_avatar">上傳頭像</string>
