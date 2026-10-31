@@ -1,0 +1,265 @@
+/*
+ * Copyright (C) 2024-2026 OpenAni and contributors.
+ *
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
+ *
+ * https://github.com/open-ani/ani/blob/main/LICENSE
+ */
+
+package me.him188.ani.app.ui.subject.details.tracking
+
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
+import me.him188.ani.app.data.models.bangumi.BangumiSyncState
+import me.him188.ani.app.data.models.subject.SubjectCollectionCounts
+import me.him188.ani.app.data.models.subject.SubjectCollectionInfo
+import me.him188.ani.app.data.models.subject.createTestSubjectCollection
+import me.him188.ani.app.data.repository.subject.CollectionsFilterQuery
+import me.him188.ani.app.data.repository.subject.OfflineSubjectDisplayInfo
+import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
+import me.him188.ani.datasources.api.topic.UnifiedCollectionType
+import me.him188.ani.tracking.api.DefaultTrackingRegistry
+import me.him188.ani.tracking.api.TrackingAccount
+import me.him188.ani.tracking.api.TrackingAccountState
+import me.him188.ani.tracking.api.TrackingBindingRecord
+import me.him188.ani.tracking.api.TrackingEdit
+import me.him188.ani.tracking.api.TrackingListEntry
+import me.him188.ani.tracking.api.TrackingMedia
+import me.him188.ani.tracking.api.TrackingMediaId
+import me.him188.ani.tracking.api.TrackingProviderId
+import me.him188.ani.tracking.api.TrackingProviderException
+import me.him188.ani.tracking.api.TrackingProviderInfo
+import me.him188.ani.tracking.api.TrackingScoreOption
+import me.him188.ani.tracking.api.TrackingSnapshot
+import me.him188.ani.tracking.api.TrackingSource
+import me.him188.ani.tracking.api.TrackingSourceCapabilities
+import me.him188.ani.tracking.api.TrackingStatus
+import me.him188.ani.tracking.api.TrackingStatusOption
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+
+class TrackingCoordinatorTest {
+    @Test
+    fun subjectInfoIsReadFromTheRequestedSubjectCollection() = runTest {
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(emptyList()), FakeSubjectCollectionRepository())
+
+        val info = coordinator.subjectInfo(43).first()
+
+        assertEquals(43, info.subjectId)
+        assertEquals("Subject Name", info.name)
+    }
+
+    @Test
+    fun subjectInfoReemitsWhenSubjectCollectionChanges() = runTest {
+        val names = MutableStateFlow("First Name")
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(emptyList()), FakeSubjectCollectionRepository(names))
+        val emittedNames = mutableListOf<String>()
+        backgroundScope.launch { coordinator.subjectInfo(43).collect { emittedNames += it.name } }
+        runCurrent()
+
+        names.value = "Second Name"
+        runCurrent()
+
+        assertEquals(listOf("First Name", "Second Name"), emittedNames)
+    }
+
+    @Test
+    fun registeredThirdSourceUsesTheSameCardAndEditPath() = runTest {
+        val sources = listOf(FakeSource("bangumi"), FakeSource("anilist"),
+            FakeSource("third", TrackingSourceCapabilities(canEditScore = false)))
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(sources), FakeSubjectCollectionRepository())
+
+        val cards = coordinator.observe(42).first { cards -> cards.size == 3 && cards.all { it.load is TrackingLoad.Ready } }
+        assertEquals(listOf("bangumi", "anilist", "third"), cards.map { it.providerId.value })
+        assertFalse(cards.last().capabilities.canEditScore)
+
+        coordinator.edit(42, TrackingProviderId("third"), TrackingEdit.Status(TrackingStatus.COMPLETED))
+        assertEquals(TrackingEdit.Status(TrackingStatus.COMPLETED), sources.last().lastEdit)
+    }
+
+    @Test
+    fun initialRateLimitRemainsVisibleAfterAccountRefreshFails() = runTest {
+        val source = FakeSource(
+            "anilist",
+            connected = false,
+            observeFailure = TrackingProviderException.RateLimited(15_100),
+        )
+        val card = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)), FakeSubjectCollectionRepository())
+            .observe(42).first { it.single().load is TrackingLoad.RateLimited }.single()
+
+        assertEquals(16, (card.load as TrackingLoad.RateLimited).retryAfterSeconds)
+        assertFalse(card.isConnected)
+        assertTrue(card.shouldShowInTrackingSheet)
+    }
+
+    @Test
+    fun editBindAndUnlinkDoNotRestartObservers() = runTest {
+        val source = FakeSource("anilist")
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)), FakeSubjectCollectionRepository())
+        val providerId = TrackingProviderId("anilist")
+        backgroundScope.launch { coordinator.observe(42).collect {} }
+        runCurrent()
+        assertEquals(1, source.observeCalls.value)
+
+        coordinator.edit(42, providerId, TrackingEdit.Status(TrackingStatus.COMPLETED))
+        coordinator.bind(42, providerId, TrackingMediaId("42"))
+        coordinator.unlink(42, providerId)
+        advanceUntilIdle()
+        // A restart would first join the cancelled flowOn(IO) collection in real time, so give it a chance to run.
+        withContext(Dispatchers.Default) { delay(200.milliseconds) }
+        advanceUntilIdle()
+
+        assertEquals(1, source.observeCalls.value)
+    }
+
+    @Test
+    fun manualRefreshInvalidatesTheSubjectAndRestartsObservers() = runTest {
+        val source = FakeSource("anilist")
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)), FakeSubjectCollectionRepository())
+        backgroundScope.launch { coordinator.observe(42).collect {} }
+        runCurrent()
+
+        coordinator.refresh(42)
+        // The restart waits for the cancelled flowOn(IO) collection in real time, so await the new observe call.
+        source.observeCalls.first { it == 2 }
+
+        assertEquals(listOf(42), source.invalidatedSubjects)
+    }
+
+    @Test
+    fun registryBacksUpBindingsAcrossSources() = runTest {
+        val first = FakeSource("first")
+        val second = FakeSource("second")
+        val registry = DefaultTrackingRegistry(listOf(first, second))
+        val records = listOf(
+            TrackingBindingRecord("first", "account-a", 42, "100"),
+            TrackingBindingRecord("second", "account-b", 42, "200"),
+        )
+
+        registry.restoreBindings(records)
+        assertEquals(records, registry.exportBindings())
+        assertFailsWith<IllegalArgumentException> {
+            registry.restoreBindings(listOf(TrackingBindingRecord("unknown", "account", 42, "300")))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            registry.restoreBindings(listOf(
+                TrackingBindingRecord("first", "account-a", 43, "101"),
+                TrackingBindingRecord("second", "account-b", -1, "201"),
+            ))
+        }
+        assertEquals(records, registry.exportBindings())
+    }
+
+    @Test
+    fun registryRestoresBindingsWithoutConnectedAccount() = runTest {
+        val source = FakeSource("offline", connected = false)
+        val registry = DefaultTrackingRegistry(listOf(source))
+        val record = TrackingBindingRecord("offline", "account-a", 42, "100")
+
+        registry.restoreBindings(listOf(record))
+
+        assertEquals(listOf(record), registry.exportBindings())
+    }
+
+    /** Only [subjectCollectionFlow] is used by the coordinator; the other members are unreachable here. */
+    private class FakeSubjectCollectionRepository(
+        private val names: Flow<String> = flowOf("Subject Name"),
+    ) : SubjectCollectionRepository() {
+        override fun subjectCollectionFlow(subjectId: Int): Flow<SubjectCollectionInfo> =
+            names.map { name ->
+                createTestSubjectCollection(subjectId, emptyList(), UnifiedCollectionType.DOING)
+                    .let { it.copy(subjectInfo = it.subjectInfo.copy(name = name)) }
+            }
+
+        override fun subjectCollectionCountsFlow(): Flow<SubjectCollectionCounts?> = throw UnsupportedOperationException()
+        override fun subjectCollectionsPager(
+            query: CollectionsFilterQuery,
+            pagingConfig: PagingConfig,
+        ): Flow<PagingData<SubjectCollectionInfo>> = throw UnsupportedOperationException()
+        override fun cachedValidSubjectIds(): Flow<List<Int>> = throw UnsupportedOperationException()
+        override suspend fun updateRecentlyUpdatedSubjectCollections(limit: Int, type: UnifiedCollectionType?, offset: Int) =
+            throw UnsupportedOperationException()
+        override fun mostRecentlyUpdatedSubjectCollectionsFlow(
+            limit: Int,
+            types: List<UnifiedCollectionType>?,
+        ): Flow<List<SubjectCollectionInfo>> = throw UnsupportedOperationException()
+        override suspend fun updateRating(
+            subjectId: Int,
+            score: Int?,
+            comment: String?,
+            tags: List<String>?,
+            isPrivate: Boolean?,
+        ) = throw UnsupportedOperationException()
+        override suspend fun setSubjectCollectionTypeOrDelete(subjectId: Int, type: UnifiedCollectionType?) =
+            throw UnsupportedOperationException()
+        override fun getSubjectCollectionTypeOffline(subjectId: Int): Flow<UnifiedCollectionType?> =
+            throw UnsupportedOperationException()
+        override fun getSubjectDisplayInfoOffline(subjectId: Int): Flow<OfflineSubjectDisplayInfo?> =
+            throw UnsupportedOperationException()
+        override suspend fun getSubjectNamesCnByCollectionType(types: List<UnifiedCollectionType>): Flow<List<String>> =
+            throw UnsupportedOperationException()
+        override suspend fun performBangumiFullSync() = throw UnsupportedOperationException()
+        override suspend fun getBangumiFullSyncState(): BangumiSyncState? = throw UnsupportedOperationException()
+        override suspend fun invalidateCache(subjectIds: List<Int>) = throw UnsupportedOperationException()
+        override suspend fun invalidateAllCaches() = throw UnsupportedOperationException()
+    }
+
+    private class FakeSource(
+        id: String,
+        override val capabilities: TrackingSourceCapabilities = TrackingSourceCapabilities(),
+        connected: Boolean = true,
+        private val observeFailure: Throwable? = null,
+    ) : TrackingSource {
+        override val info = TrackingProviderInfo(TrackingProviderId(id), id, "https://example.org")
+        override val connection: Flow<TrackingAccountState> = flowOf(
+            if (connected) TrackingAccountState.LoggedIn(TrackingAccount("1", "test")) else TrackingAccountState.LoggedOut,
+        )
+        override val statusOptions = listOf(TrackingStatusOption(TrackingStatus.CURRENT, "Watching"))
+        override val scoreOptions = emptyList<TrackingScoreOption>()
+        var lastEdit: TrackingEdit? = null
+        val observeCalls = MutableStateFlow(0)
+        val invalidatedSubjects = mutableListOf<Int>()
+        private var bindings = emptyList<TrackingBindingRecord>()
+        private val snapshot = TrackingSnapshot(
+            TrackingMedia(TrackingMediaId("42"), "Test", "https://example.org/42", null, 12),
+            TrackingListEntry(TrackingMediaId("42"), TrackingStatus.CURRENT, 1),
+        )
+
+        override fun invalidate(subjectId: Int) {
+            invalidatedSubjects += subjectId
+        }
+        override fun observe(subjectId: Int): Flow<TrackingSnapshot?> {
+            observeCalls.value++
+            return observeFailure?.let { failure -> flow { throw failure } } ?: flowOf(snapshot)
+        }
+        override suspend fun bind(subjectId: Int, mediaId: TrackingMediaId): TrackingSnapshot = snapshot
+        override suspend fun edit(subjectId: Int, edit: TrackingEdit): TrackingSnapshot {
+            lastEdit = edit
+            return snapshot
+        }
+        override suspend fun unlink(subjectId: Int) {}
+        override fun exportBindings(): List<TrackingBindingRecord> = bindings
+        override suspend fun validateBindings(records: List<TrackingBindingRecord>) {
+            require(records.all { it.providerId == info.id.value && it.subjectId > 0 })
+        }
+        override fun applyValidatedBindings(records: List<TrackingBindingRecord>) { bindings = records }
+    }
+}

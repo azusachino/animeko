@@ -15,6 +15,8 @@ import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.domain.foundation.LoadError
 import me.him188.ani.app.domain.usecase.UseCase
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
+import me.him188.ani.utils.logging.info
+import me.him188.ani.utils.logging.logger
 import org.koin.core.Koin
 
 data class SetEpisodeCollectionTypeRequest(
@@ -37,15 +39,21 @@ fun interface SetEpisodeCollectionTypeUseCase : UseCase {
     }
 }
 
+fun interface EpisodeTrackingSync {
+    fun onEpisodeWatched(subjectId: Int, episodeId: Int)
+}
+
 class SetEpisodeCollectionTypeUseCaseImpl(
     koin: Koin,
 ) : SetEpisodeCollectionTypeUseCase {
     private val episodeCollectionRepository: EpisodeCollectionRepository by koin.inject()
+    private val logger = logger<SetEpisodeCollectionTypeUseCaseImpl>()
+
     override suspend fun invoke(subjectId: Int, episodeId: Int, collectionType: UnifiedCollectionType) {
         withContext(Dispatchers.Default) {
-            // 只写本地并入队, 不发网络请求; 推送由 EpisodeCollectionSyncer 负责
+            logger.info { "[tracking-sync] set collection subjectId=$subjectId episodeId=$episodeId type=$collectionType" }
+            // The repository persists locally, enqueues server sync, then notifies tracking sync.
             episodeCollectionRepository.setEpisodeCollectionType(subjectId, episodeId, collectionType)
         }
     }
 }
-

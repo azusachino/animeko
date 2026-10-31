@@ -1,0 +1,332 @@
+/*
+ * Copyright (C) 2024-2026 OpenAni and contributors.
+ *
+ * Use of this source code is governed by the GNU AGPLv3 license.
+ */
+
+package me.him188.ani.app.tracking.anilist
+
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.ClientRequestException
+import io.ktor.client.plugins.ResponseException
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import me.him188.ani.tracking.api.TrackingAccount
+import me.him188.ani.tracking.api.TrackingAccountState
+import me.him188.ani.tracking.api.TrackingCapabilities
+import me.him188.ani.tracking.api.TrackingCredentialStore
+import me.him188.ani.tracking.api.TrackingDate
+import me.him188.ani.tracking.api.TrackingDateField
+import me.him188.ani.tracking.api.TrackingListEntry
+import me.him188.ani.tracking.api.TrackingLoginCredentials
+import me.him188.ani.tracking.api.TrackingMedia
+import me.him188.ani.tracking.api.TrackingMediaId
+import me.him188.ani.tracking.api.TrackingMediaWithEntry
+import me.him188.ani.tracking.api.TrackingProvider
+import me.him188.ani.tracking.api.TrackingProviderException
+import me.him188.ani.tracking.api.TrackingProviderId
+import me.him188.ani.tracking.api.TrackingProviderInfo
+import me.him188.ani.tracking.api.TrackingScore
+import me.him188.ani.tracking.api.TrackingScoreOption
+import me.him188.ani.tracking.api.TrackingStatus
+import me.him188.ani.tracking.api.TrackingStatusOption
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
+
+class AniListTrackingProvider(
+    client: HttpClient,
+    private val credentialStore: TrackingCredentialStore,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val accountValidity: Duration = 5.minutes,
+) : TrackingProvider {
+    private val api = AniListApi(client)
+    private val mutableAccountState = MutableStateFlow<TrackingAccountState>(TrackingAccountState.LoggedOut)
+
+    /** Serializes login, refresh and logout; never held across search or entry calls. */
+    private val accountMutex = Mutex()
+    private var cachedToken: String? = null
+    /** When the account was last validated by the server; guarded by [accountMutex]. */
+    private var accountValidatedAt: TimeMark? = null
+    /** The last failed validation, when it happened and what it threw; guarded by [accountMutex]. */
+    private var accountValidationFailure: Pair<TimeMark, Throwable>? = null
+    private var scoreOptionChoices = scoreOptions(POINT_100)
+
+    override val info = INFO
+    override val capabilities = TrackingCapabilities(
+        supportsStartAndCompletionDates = true,
+        supportsPrivateEntries = true,
+    )
+    override val accountState: StateFlow<TrackingAccountState> = mutableAccountState
+    override val statusOptions = listOf(
+        TrackingStatusOption(TrackingStatus.PLANNING, "Plan to watch"),
+        TrackingStatusOption(TrackingStatus.CURRENT, "Watching"),
+        TrackingStatusOption(TrackingStatus.COMPLETED, "Completed"),
+        TrackingStatusOption(TrackingStatus.PAUSED, "On hold"),
+        TrackingStatusOption(TrackingStatus.DROPPED, "Dropped"),
+        TrackingStatusOption(TrackingStatus.REPEATING, "Rewatching"),
+    )
+    override val scoreOptions: List<TrackingScoreOption>
+        get() = scoreOptionChoices
+
+    override suspend fun login(credentials: TrackingLoginCredentials): TrackingAccount = accountMutex.withLock {
+        accountValidationFailure = null
+        call {
+            val viewer = api.viewer(credentials.secret)
+            credentialStore.save(credentials)
+            credentialStore.setSignedOutByUser(false)
+            cachedToken = credentials.secret
+            viewer.applyToAccountState()
+        }
+    }
+
+    override suspend fun refreshAccount(): TrackingAccount = accountMutex.withLock {
+        val validated = (mutableAccountState.value as? TrackingAccountState.LoggedIn)?.takeIf {
+            accountValidatedAt?.let { mark -> mark.elapsedNow() < accountValidity } == true
+        }
+        if (validated != null) return@withLock validated.account
+        // A failed validation is rethrown for accountValidity instead of asking the server again.
+        accountValidationFailure?.let { (failedAt, failure) ->
+            if (failedAt.elapsedNow() < accountValidity) throw failure
+        }
+        val credentials = credentialStore.load() ?: run {
+            mutableAccountState.value = TrackingAccountState.LoggedOut
+            throw TrackingProviderException.Unauthorized()
+        }
+        val previous = (mutableAccountState.value as? TrackingAccountState.LoggedIn)?.account
+        mutableAccountState.value = TrackingAccountState.Refreshing(previous)
+        try {
+            call { api.viewer(credentials.secret) }.applyToAccountState().also { cachedToken = credentials.secret }
+        } catch (failure: TrackingProviderException.Unauthorized) {
+            logoutLocked()
+            throw failure
+        } catch (failure: Throwable) {
+            mutableAccountState.value = previous?.let(TrackingAccountState::LoggedIn) ?: TrackingAccountState.LoggedOut
+            if (failure !is CancellationException) accountValidationFailure = timeSource.markNow() to failure
+            throw failure
+        }
+    }
+
+    override suspend fun logout(): Unit = accountMutex.withLock {
+        logoutLocked()
+        credentialStore.setSignedOutByUser(true)
+    }
+
+    override suspend fun isSignedOutByUser(): Boolean = credentialStore.isSignedOutByUser()
+
+    /** Clears the session after a rejection or a deliberate logout; the caller decides whether it was deliberate. */
+    private suspend fun logoutLocked() {
+        credentialStore.clear()
+        cachedToken = null
+        accountValidatedAt = null
+        accountValidationFailure = null
+        mutableAccountState.value = TrackingAccountState.LoggedOut
+    }
+
+    override suspend fun search(query: String): List<TrackingMedia> = call {
+        require(query.isNotBlank()) { "Search query must not be blank" }
+        api.search(query, token()).map { it.toTrackingMedia() }
+    }
+
+    override suspend fun prepareBinding(mediaId: TrackingMediaId): TrackingMediaWithEntry? = refresh(mediaId)
+
+    override suspend fun bind(entry: TrackingListEntry): TrackingListEntry = call {
+        if (api.getMedia(entry.mediaId.asAniListId(), token())?.mediaListEntry != null) {
+            throw TrackingProviderException.Remote("AniList already has an entry for this title")
+        }
+        save(entry, null)
+    }
+
+    override suspend fun update(
+        entry: TrackingListEntry,
+        didWatchEpisode: Boolean,
+        totalEpisodes: Int?,
+    ): TrackingListEntry {
+        // Dropped and on-hold entries are the user's deliberate choice; only the progress number changes.
+        if (!didWatchEpisode || entry.status in STATUSES_KEPT_ON_WATCH) return saveExisting(entry)
+        val total = totalEpisodes ?: refresh(entry.mediaId)?.media?.totalEpisodes
+        val status = when {
+            total != null && entry.progress >= total -> TrackingStatus.COMPLETED
+            entry.status == TrackingStatus.PLANNING -> TrackingStatus.CURRENT
+            else -> entry.status
+        }
+        return saveExisting(entry.copy(status = status))
+    }
+
+    override suspend fun updateDate(entry: TrackingListEntry, field: TrackingDateField, date: TrackingDate?): TrackingListEntry = call {
+        val token = token()
+        api.updateDate(entry.resolveEntryId(token), field, date, token).toTrackingEntry()
+    }
+
+    override suspend fun updateVisibility(entry: TrackingListEntry, isPrivate: Boolean): TrackingListEntry = call {
+        val token = token()
+        api.updateVisibility(entry.resolveEntryId(token), isPrivate, token).toTrackingEntry()
+    }
+
+    override suspend fun refresh(mediaId: TrackingMediaId): TrackingMediaWithEntry? = call {
+        api.getMedia(mediaId.asAniListId(), token())?.let {
+            TrackingMediaWithEntry(it.toTrackingMedia(), it.mediaListEntry?.toTrackingEntry())
+        }
+    }
+
+    override suspend fun delete(mediaId: TrackingMediaId): Unit = call {
+        val token = token()
+        val entryId = api.getMedia(mediaId.asAniListId(), token)?.mediaListEntry?.id ?: return@call
+        if (!api.delete(entryId, token)) {
+            throw TrackingProviderException.Remote("AniList did not delete list entry $entryId")
+        }
+    }
+
+    private suspend fun saveExisting(entry: TrackingListEntry): TrackingListEntry = call {
+        save(entry, entry.resolveEntryId(token()))
+    }
+
+    /** Uses the entry ID the caller already holds from a fresh read, and only looks it up when absent. */
+    private suspend fun TrackingListEntry.resolveEntryId(token: String): Int =
+        remoteEntryId?.asAniListEntryId()
+            ?: api.getMedia(mediaId.asAniListId(), token)?.mediaListEntry?.id
+            ?: throw TrackingProviderException.Remote("AniList list entry no longer exists")
+
+    private suspend fun save(entry: TrackingListEntry, entryId: Int?): TrackingListEntry = call {
+        api.save(
+            mediaId = entry.mediaId.asAniListId(),
+            entryId = entryId,
+            update = AniListEntryUpdate(
+                status = entry.status.toAniListStatus(),
+                score = entry.score.value,
+                progress = entry.progress,
+            ),
+            token = token(),
+        ).toTrackingEntry()
+    }
+
+    private suspend fun token(): String = cachedToken ?: accountMutex.withLock {
+        cachedToken ?: credentialStore.load()?.secret?.also { cachedToken = it }
+            ?: throw TrackingProviderException.Unauthorized()
+    }
+
+    private fun AniListViewer.applyToAccountState(): TrackingAccount {
+        scoreOptionChoices = scoreOptions(mediaListOptions.scoreFormat)
+        accountValidatedAt = timeSource.markNow()
+        return TrackingAccount(id.toString(), name, avatar?.large).also {
+            mutableAccountState.value = TrackingAccountState.LoggedIn(it)
+        }
+    }
+
+    private suspend fun <T> call(block: suspend () -> T): T = try {
+        block()
+    } catch (failure: CancellationException) {
+        throw failure
+    } catch (failure: TrackingProviderException) {
+        throw failure
+    } catch (failure: ClientRequestException) {
+        val response = failure.response
+        val status = response.status
+        when {
+            status == HttpStatusCode.Unauthorized || status == HttpStatusCode.Forbidden ->
+                throw TrackingProviderException.Unauthorized(failure)
+            status == HttpStatusCode.TooManyRequests -> throw TrackingProviderException.RateLimited(
+                response.headers[HttpHeaders.RetryAfter]?.toLongOrNull()?.times(1000),
+                failure,
+            )
+            // AniList reports an expired or revoked token as HTTP 400 with an "Invalid token" GraphQL error.
+            status == HttpStatusCode.BadRequest && INVALID_TOKEN_MESSAGE in response.bodyAsText() ->
+                throw TrackingProviderException.Unauthorized(failure)
+            else -> throw TrackingProviderException.Remote("AniList request failed: $status", failure)
+        }
+    } catch (failure: AniListGraphQLException) {
+        if (failure.invalidToken) throw TrackingProviderException.Unauthorized(failure)
+        throw TrackingProviderException.Remote(failure.message ?: "AniList GraphQL error", failure)
+    } catch (failure: ResponseException) {
+        throw TrackingProviderException.Remote("AniList request failed: ${failure.response.status}", failure)
+    } catch (failure: Exception) {
+        throw TrackingProviderException.Remote("AniList request failed", failure)
+    }
+
+    companion object {
+        private const val POINT_100 = "POINT_100"
+        val ID = TrackingProviderId("anilist")
+        private val STATUSES_KEPT_ON_WATCH = setOf(TrackingStatus.COMPLETED, TrackingStatus.PAUSED, TrackingStatus.DROPPED)
+
+        /** OAuth client registered on AniList with the redirect URI `ani://anilist-auth`. */
+        const val CLIENT_ID = "51393"
+        const val AUTHORIZE_URL = "https://anilist.co/api/v2/oauth/authorize?client_id=$CLIENT_ID&response_type=token"
+
+        val INFO = TrackingProviderInfo(
+            id = ID,
+            displayName = "AniList",
+            websiteUrl = "https://anilist.co",
+        )
+    }
+}
+
+private fun scoreOptions(format: String): List<TrackingScoreOption> = when (format) {
+    "POINT_100" -> (0..100).map { TrackingScoreOption(TrackingScore(it), it.toString()) }
+    "POINT_10" -> (0..10).map { TrackingScoreOption(TrackingScore(it * 10), it.toString()) }
+    "POINT_10_DECIMAL" -> (0..100).map { TrackingScoreOption(TrackingScore(it), (it / 10f).toString()) }
+    "POINT_5" -> (0..5).map { index ->
+        TrackingScoreOption(TrackingScore(if (index == 0) 0 else index * 20 - 10), "$index ★")
+    }
+    "POINT_3" -> listOf(
+        TrackingScoreOption(TrackingScore(0), "-"),
+        TrackingScoreOption(TrackingScore(35), "😦"),
+        TrackingScoreOption(TrackingScore(60), "😐"),
+        TrackingScoreOption(TrackingScore(85), "😊"),
+    )
+    else -> throw TrackingProviderException.Remote("Unknown AniList score format: $format")
+}
+
+private fun AniListMedia.toTrackingMedia() = TrackingMedia(
+    id = TrackingMediaId(id.toString()),
+    title = title.userPreferred ?: title.romaji ?: title.english ?: title.native ?: "#$id",
+    siteUrl = siteUrl ?: "https://anilist.co/anime/$id",
+    coverImageUrl = coverImage?.large,
+    totalEpisodes = episodes,
+)
+
+private fun AniListEntry.toTrackingEntry() = TrackingListEntry(
+    mediaId = TrackingMediaId(requireNotNull(mediaId) { "AniList list entry omitted mediaId" }.toString()),
+    status = status.toTrackingStatus(),
+    progress = progress,
+    score = TrackingScore(score),
+    startedAt = startedAt?.takeIf { it.year != null || it.month != null || it.day != null }
+        ?.let { TrackingDate(it.year, it.month, it.day) },
+    completedAt = completedAt?.takeIf { it.year != null || it.month != null || it.day != null }
+        ?.let { TrackingDate(it.year, it.month, it.day) },
+    isPrivate = isPrivate,
+    remoteEntryId = id.toString(),
+)
+
+private fun TrackingMediaId.asAniListId(): Int = value.toIntOrNull()
+    ?: throw TrackingProviderException.Remote("AniList media ID must be an integer: $value")
+
+private fun String.asAniListEntryId(): Int = toIntOrNull()
+    ?: throw TrackingProviderException.Remote("AniList list entry ID must be an integer: $this")
+
+private fun String.toTrackingStatus(): TrackingStatus = (AniListMediaListStatus.fromWire(this)
+    ?: throw TrackingProviderException.Remote("Unknown AniList status: $this")).toTrackingStatus()
+
+private fun AniListMediaListStatus.toTrackingStatus() = when (this) {
+    AniListMediaListStatus.CURRENT -> TrackingStatus.CURRENT
+    AniListMediaListStatus.REPEATING -> TrackingStatus.REPEATING
+    AniListMediaListStatus.COMPLETED -> TrackingStatus.COMPLETED
+    AniListMediaListStatus.PAUSED -> TrackingStatus.PAUSED
+    AniListMediaListStatus.DROPPED -> TrackingStatus.DROPPED
+    AniListMediaListStatus.PLANNING -> TrackingStatus.PLANNING
+}
+
+private fun TrackingStatus.toAniListStatus() = when (this) {
+    TrackingStatus.CURRENT -> AniListMediaListStatus.CURRENT
+    TrackingStatus.COMPLETED -> AniListMediaListStatus.COMPLETED
+    TrackingStatus.PAUSED -> AniListMediaListStatus.PAUSED
+    TrackingStatus.DROPPED -> AniListMediaListStatus.DROPPED
+    TrackingStatus.PLANNING -> AniListMediaListStatus.PLANNING
+    TrackingStatus.REPEATING -> AniListMediaListStatus.REPEATING
+}

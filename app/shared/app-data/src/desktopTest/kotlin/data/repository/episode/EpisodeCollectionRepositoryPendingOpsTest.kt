@@ -22,6 +22,8 @@ import me.him188.ani.app.data.persistent.database.createTestAniDatabase
 import me.him188.ani.app.data.persistent.database.dao.EpisodeCollectionEntity
 import me.him188.ani.app.data.persistent.database.dao.SubjectCollectionEntity
 import me.him188.ani.app.data.repository.subject.GetEpisodeTypeFiltersUseCase
+import me.him188.ani.app.domain.episode.EpisodeTrackingSync
+import me.him188.ani.app.domain.episode.SetEpisodeCollectionTypeUseCaseImpl
 import me.him188.ani.client.apis.ScheduleAniApi
 import me.him188.ani.client.apis.SubjectsAniApi
 import me.him188.ani.datasources.api.EpisodeSort
@@ -29,6 +31,8 @@ import me.him188.ani.datasources.api.EpisodeType
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
 import me.him188.ani.utils.ktor.ApiInvoker
+import org.koin.core.Koin
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -47,7 +51,11 @@ class EpisodeCollectionRepositoryPendingOpsTest {
 
     private class Fixture(val database: AniDatabase, val repository: EpisodeCollectionRepository, val dirtyCalls: () -> Int)
 
-    private fun runRepositoryTest(now: Long = 1_000, block: suspend Fixture.() -> Unit) = runBlocking {
+    private fun runRepositoryTest(
+        now: Long = 1_000,
+        trackingSync: EpisodeTrackingSync? = null,
+        block: suspend Fixture.() -> Unit,
+    ) = runBlocking {
         val database = createTestAniDatabase()
         var dirty = 0
         try {
@@ -59,6 +67,7 @@ class EpisodeCollectionRepositoryPendingOpsTest {
                 animeScheduleRepository = AnimeScheduleRepository(AnimeScheduleService(UnusedScheduleApi)),
                 subjectCollectionRepository = lazy { error("SubjectCollectionRepository not expected") },
                 getEpisodeTypeFiltersUseCase = GetEpisodeTypeFiltersUseCase { flowOf(EpisodeType.entries) },
+                trackingSync = trackingSync,
                 nowMillis = { now },
                 onDirtyChanged = { dirty++ },
             )
@@ -93,6 +102,46 @@ class EpisodeCollectionRepositoryPendingOpsTest {
     }
 
     @Test
+    fun `setEpisodeCollectionType notifies tracking sync once when marked done`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(trackingSync = { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId }) {
+            seed(1, listOf(11, 12))
+
+            repository.setEpisodeCollectionType(1, 11, UnifiedCollectionType.DONE)
+
+            assertEquals(listOf(1 to 11), trackedEpisodes)
+        }
+    }
+
+    @Test
+    fun `setEpisodeCollectionType does not notify tracking sync when not done`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(trackingSync = { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId }) {
+            seed(1, listOf(11, 12), UnifiedCollectionType.DONE)
+
+            repository.setEpisodeCollectionType(1, 11, UnifiedCollectionType.WISH)
+            repository.setEpisodeCollectionType(1, 12, UnifiedCollectionType.NOT_COLLECTED)
+
+            assertEquals(emptyList(), trackedEpisodes)
+        }
+    }
+
+    @Test
+    fun `use case notifies tracking sync exactly once through the repository`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(trackingSync = { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId }) {
+            seed(1, listOf(11))
+            val koin = Koin()
+            koin.loadModules(listOf(module { single<EpisodeCollectionRepository> { repository } }))
+
+            SetEpisodeCollectionTypeUseCaseImpl(koin).invoke(1, 11, UnifiedCollectionType.DONE)
+
+            assertEquals(UnifiedCollectionType.DONE, localType(11))
+            assertEquals(listOf(1 to 11), trackedEpisodes)
+        }
+    }
+
+    @Test
     fun `remote refresh keeps locally pending collection type`() = runRepositoryTest {
         seed(1, listOf(11, 12))
         repository.setEpisodeCollectionType(1, 11, UnifiedCollectionType.DONE)
@@ -111,15 +160,28 @@ class EpisodeCollectionRepositoryPendingOpsTest {
     }
 
     @Test
-    fun `setAllEpisodesWatched enqueues every episode of the subject`() = runRepositoryTest {
-        seed(1, listOf(11, 12, 13))
-        seed(2, listOf(21))
+    fun `setAllEpisodesWatched enqueues every episode and syncs AniList to the last main episode`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(
+            trackingSync = EpisodeTrackingSync { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId },
+        ) {
+            seed(1, listOf(11, 12, 13))
+            seed(2, listOf(21))
+            database.episodeCollection().upsert(
+                episode(1, 14, UnifiedCollectionType.WISH).copy(
+                    episodeType = EpisodeType.SP,
+                    ep = EpisodeSort("SP14"),
+                ),
+            )
 
-        repository.setAllEpisodesWatched(1)
+            repository.setAllEpisodesWatched(1)
 
-        assertEquals(setOf(11, 12, 13), repository.pendingOpsFlow.first().map { it.episodeId }.toSet())
-        assertEquals(UnifiedCollectionType.DONE, localType(13))
-        assertEquals(UnifiedCollectionType.WISH, localType(21))
+            assertEquals(setOf(11, 12, 13, 14), repository.pendingOpsFlow.first().map { it.episodeId }.toSet())
+            assertEquals(UnifiedCollectionType.DONE, localType(13))
+            assertEquals(UnifiedCollectionType.WISH, localType(21))
+            assertEquals(1, dirtyCalls())
+            assertEquals(listOf(1 to 13), trackedEpisodes)
+        }
     }
 
     @Test
@@ -167,6 +229,7 @@ class EpisodeCollectionRepositoryPendingOpsTest {
         desc = "",
         sort = EpisodeSort(episodeId),
         sortNumber = episodeId.toFloat(),
+        ep = EpisodeSort(episodeId),
         selfCollectionType = type,
         lastFetched = 0,
     )

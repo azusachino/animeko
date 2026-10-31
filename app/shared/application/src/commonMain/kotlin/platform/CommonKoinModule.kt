@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.flowOf
@@ -134,6 +136,23 @@ import me.him188.ani.app.domain.watchtogether.WatchTogetherManager
 import me.him188.ani.app.domain.usecase.useCaseModules
 import me.him188.ani.app.ui.subject.details.state.DefaultSubjectDetailsStateFactory
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateFactory
+import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
+import me.him188.ani.app.data.tracking.BangumiTrackingSource
+import me.him188.ani.app.data.tracking.TrackingBindingStore
+import me.him188.ani.app.tracking.anilist.AniListTrackingProvider
+import me.him188.ani.app.ui.foundation.icons.BangumiTrackingIcon
+import me.him188.ani.app.ui.foundation.icons.TrackingIconRenderer
+import me.him188.ani.app.ui.foundation.icons.TrackingIconRegistry
+import me.him188.ani.app.ui.settings.account.BangumiTrackingAccountConnector
+import me.him188.ani.app.ui.foundation.tracking.TrackingAccountConnector
+import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
+import me.him188.ani.app.ui.subject.details.tracking.TrackingCoordinator
+import me.him188.ani.tracking.api.DefaultTrackingRegistry
+import me.him188.ani.tracking.api.TrackingAccountState
+import me.him188.ani.tracking.api.TrackingBindingBackup
+import me.him188.ani.tracking.api.TrackingProviderException
+import me.him188.ani.tracking.api.TrackingRegistry
+import me.him188.ani.tracking.api.TrackingSource
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.coroutines.childScope
 import me.him188.ani.utils.coroutines.childScopeContext
@@ -142,6 +161,7 @@ import me.him188.ani.utils.io.resolve
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 import org.koin.core.KoinApplication
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import kotlin.time.Duration.Companion.minutes
@@ -531,7 +551,25 @@ private fun KoinApplication.otherModules(
     // Caching
     single<MeteredNetworkDetector> { createMeteredNetworkDetector(getContext()) }
     single<SubjectDetailsStateFactory> { DefaultSubjectDetailsStateFactory() }
+    single { BangumiTrackingSource(get(), get(), inject(), get(), inject()) }
+    single { BangumiTrackingIcon() }
+    single { BangumiTrackingAccountConnector() }
+    single { TrackingIconRegistry(listOf(get<BangumiTrackingIcon>()) + getAll<TrackingIconRenderer>()) }
+    single { TrackingAccountRegistry(listOf(get<BangumiTrackingAccountConnector>()) + getAll<TrackingAccountConnector>()) }
+    single<TrackingRegistry> { DefaultTrackingRegistry(listOf(get<BangumiTrackingSource>()) + getAll<TrackingSource>()) }
+    single<TrackingBindingBackup> { get<TrackingRegistry>() }
+    single { TrackingCoordinator(get(), get()) }
+    single {
+        TrackingEpisodeSynchronizer(
+            get(),
+            getOrNull<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE)),
+            scope = coroutineScope,
+        )
+    }
 }
+
+/** Qualifier of the platform-provided [TrackingBindingStore] that holds episodes awaiting tracking sync. */
+const val ANILIST_PENDING_SYNC_STORE = "anilist-pending-sync"
 
 /**
  * 会在非 preview 环境调用. 用来初始化一些模块
@@ -592,6 +630,43 @@ fun KoinApplication.startCommonKoinModule(
         val manager = koin.get<MediaDownloadManager>()
         for (storage in manager.storages) {
             storage.restorePersistedCaches()
+        }
+    }
+
+    coroutineScope.launch(Dispatchers.IO_) {
+        try {
+            koin.get<TrackingEpisodeSynchronizer>().retryPending()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger("ani-startup").warn(e) { "Failed to retry pending tracking sync" }
+        }
+    }
+
+    // Re-send queued episodes whenever a tracking source becomes signed in.
+    koin.get<TrackingRegistry>().sources.forEach { source ->
+        coroutineScope.launch(Dispatchers.IO_) {
+            source.connection
+                .filter { it !is TrackingAccountState.Refreshing }
+                .map { it is TrackingAccountState.LoggedIn }
+                .distinctUntilChanged()
+                .filter { it }
+                .collect { koin.get<TrackingEpisodeSynchronizer>().retryPending() }
+        }
+    }
+
+    coroutineScope.launch(Dispatchers.IO_) {
+        // Restore the stored AniList session in the background so the account is known before Settings opens.
+        val provider = koin.getOrNull<AniListTrackingProvider>() ?: return@launch
+        val startupLogger = logger("ani-startup")
+        try {
+            provider.refreshAccount()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: TrackingProviderException.Unauthorized) {
+            startupLogger.warn { "Stored AniList session is no longer valid; logged out" }
+        } catch (e: Exception) {
+            startupLogger.warn(e) { "Failed to restore AniList session" }
         }
     }
 

@@ -27,6 +27,8 @@ dependencies {
     implementation(projects.app.shared)
     implementation(projects.app.shared.uiFoundation)
     implementation(projects.app.shared.application)
+    implementation(projects.tracking.anilist)
+    implementation(libs.jna)
     implementation(projects.utils.videoEnhancementShaderProvider)
     implementation(libs.compose.components.resources)
     implementation(libs.compose.native.tray)
@@ -35,6 +37,8 @@ dependencies {
     implementation(libs.bytebuddy.agent)
     implementation(libs.bytebuddy)
     implementation(libs.mediamp.ffmpeg.desktop)
+
+    testImplementation(libs.kotlinx.coroutines.test) // runTest in shared tracking store contracts
 
     // mpv runtime 必须声明在 ffmpeg runtime 之前: 两个 runtime jar 的 libav* 同名且不同构建,
     // dev run 的 natives 提取按 classpath 首匹配, mpv 需要命中自己 jar 里的全功能 libav.
@@ -84,6 +88,13 @@ sourceSets {
                 .file("processedResources/desktop/main"),
             project(projects.app.shared.uiFoundation.path).layout.buildDirectory
                 .file("processedResources/desktop/main"),
+        )
+    }
+    test {
+        // Shared tracking store contracts; only the contract/ folders, not the owners' other tests.
+        kotlin.srcDirs(
+            project(projects.tracking.api.path).file("src/commonTest/kotlin/contract"),
+            project(projects.app.shared.appData.path).file("src/commonTest/kotlin/contract"),
         )
     }
 }

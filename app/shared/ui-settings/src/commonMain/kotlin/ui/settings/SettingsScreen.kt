@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.wrapContentWidth
@@ -56,6 +57,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldDestinationItem
+import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.BackNavigationBehavior
 import androidx.compose.material3.adaptive.navigation.ThreePaneScaffoldNavigator
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
@@ -98,6 +100,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import me.him188.ani.app.domain.session.auth.OAuthPlatform
+import me.him188.ani.app.domain.usecase.GlobalKoin
 import me.him188.ani.app.platform.LocalContext
 import me.him188.ani.app.platform.navigation.rememberAsyncBrowserNavigator
 import me.him188.ani.app.ui.adaptive.AniListDetailPaneScaffold
@@ -122,36 +125,10 @@ import me.him188.ani.app.ui.foundation.theme.appChromeHazeSource
 import me.him188.ani.app.ui.foundation.theme.isAppChromeFrostedGlassActive
 import me.him188.ani.app.ui.foundation.widgets.BackNavigationIconButton
 import me.him188.ani.app.ui.foundation.widgets.LocalToaster
-import me.him188.ani.app.ui.lang.Lang
-import me.him188.ani.app.ui.lang.acknowledgements
-import me.him188.ani.app.ui.lang.developer_list
-import me.him188.ani.app.ui.lang.settings_about_build_info
-import me.him188.ani.app.ui.lang.settings
-import me.him188.ani.app.ui.lang.settings_account_bangumi_sync_title
-import me.him188.ani.app.ui.lang.settings_account_github_title
-import me.him188.ani.app.ui.lang.settings_acknowledgements_oss_licenses
-import me.him188.ani.app.ui.lang.settings_category_app_ui
-import me.him188.ani.app.ui.lang.settings_category_data_playback
-import me.him188.ani.app.ui.lang.settings_category_network_storage
-import me.him188.ani.app.ui.lang.settings_category_others
-import me.him188.ani.app.ui.lang.settings_debug_dev_builds
-import me.him188.ani.app.ui.lang.settings_debug_mode_enabled
-import me.him188.ani.app.ui.lang.settings_tab_about
-import me.him188.ani.app.ui.lang.settings_tab_account
-import me.him188.ani.app.ui.lang.settings_tab_appearance
-import me.him188.ani.app.ui.lang.settings_tab_bt
-import me.him188.ani.app.ui.lang.settings_tab_danmaku
-import me.him188.ani.app.ui.lang.settings_tab_debug
-import me.him188.ani.app.ui.lang.settings_tab_log
-import me.him188.ani.app.ui.lang.settings_tab_media_selector
-import me.him188.ani.app.ui.lang.settings_tab_media_source
-import me.him188.ani.app.ui.lang.settings_tab_player
-import me.him188.ani.app.ui.lang.settings_tab_proxy
-import me.him188.ani.app.ui.lang.settings_tab_settings_backup
-import me.him188.ani.app.ui.lang.settings_tab_storage
-import me.him188.ani.app.ui.lang.settings_tab_theme
-import me.him188.ani.app.ui.lang.settings_tab_update
+import me.him188.ani.app.ui.lang.*
 import me.him188.ani.app.ui.settings.account.BangumiSyncTab
+import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
+import me.him188.ani.app.ui.settings.account.TrackingAccountItem
 import me.him188.ani.app.ui.settings.account.GithubAccountTab
 import me.him188.ani.app.ui.settings.account.ProfileGroup
 import me.him188.ani.app.ui.settings.account.SelfInfoBanner
@@ -212,6 +189,10 @@ fun SettingsScreen(
      * 调试页「打开播放流程悬浮窗」. 悬浮窗由宿主在页面之上显示.
      */
     onOpenPlayFlowDebugWindow: () -> Unit = {},
+    /**
+     * 返回上一个 app 页面 (弹出设置页路由). 设置页直接打开到某个 tab 时, 单页模式下从该 tab 返回会调用它.
+     */
+    onNavigateBack: (() -> Unit)? = null,
 ) {
     val navigator: ThreePaneScaffoldNavigator<Nothing?> = rememberListDetailPaneScaffoldNavigator(
         initialDestinationHistory = buildList {
@@ -224,6 +205,9 @@ fun SettingsScreen(
     val layoutParameters = ListDetailLayoutParameters.calculate(navigator.scaffoldDirective)
     var lastSelectedTab by rememberSaveable(initialTab) {
         mutableStateOf(initialTab)
+    }
+    var openedDirectlyOnTab by rememberSaveable(initialTab) {
+        mutableStateOf(initialTab != null)
     }
     val mediaSourceSelectionState = rememberMediaSourceSelectionState()
 
@@ -242,10 +226,20 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     fun navigateToTab(tab: SettingsTab) {
+        openedDirectlyOnTab = false
         coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
             navigator.navigateTo(ListDetailPaneScaffoldRole.Detail)
             lastSelectedTab = tab
         }
+    }
+
+    // 直接打开到某个 tab 时, 在该 tab 的详情页返回应回到打开设置页之前的页面, 而不是设置列表.
+    val appBackOnDetailPane: (() -> Unit)? = onNavigateBack?.takeIf {
+        shouldPopAppRouteOnBack(
+            openedDirectlyOnTab = openedDirectlyOnTab,
+            isSinglePane = layoutParameters.preferSinglePane,
+            currentRole = navigator.currentDestination?.pane,
+        )
     }
 
     SettingsPageLayout(
@@ -263,6 +257,8 @@ fun SettingsScreen(
         onClickBackOnDetailPage = {
             if (mediaSourceSelectionState.inSelection) {
                 mediaSourceSelectionState.clear()
+            } else if (appBackOnDetailPane != null) {
+                appBackOnDetailPane()
             } else {
                 coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
                     navigator.navigateBack(BackNavigationBehavior.PopUntilScaffoldValueChange)
@@ -284,6 +280,9 @@ fun SettingsScreen(
                 Modifier.fillMaxWidth(),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             )
+
+            Title(stringResource(Lang.settings_category_accounts), paddingTop = 12.dp)
+            Item(SettingsTab.TRACKING)
 
             Title(stringResource(Lang.settings_category_app_ui))
             Item(SettingsTab.APPEARANCE)
@@ -364,6 +363,19 @@ fun SettingsScreen(
                         tabModifier,
                     ) {
                         when (currentTab) {
+                            SettingsTab.TRACKING -> {
+                                val connectors = remember { GlobalKoin.get<TrackingAccountRegistry>().connectors }
+                                Group(title = { Text(stringResource(Lang.settings_tracking_services_group)) }) {
+                                    connectors.forEach { connector ->
+                                        TrackingAccountItem(
+                                            connector,
+                                            openBrowser = { url -> browserNavigator.openBrowser(context, url) },
+                                            openOAuth = onNavigateToOAuth,
+                                            openDetails = { route -> navigateTo(route) },
+                                        )
+                                    }
+                                }
+                            }
                             SettingsTab.PROFILE -> ProfileGroup(
                                 onNavigateToEmail = onNavigateToEmailLogin,
                                 onNavigateToBangumiSync = {
@@ -478,7 +490,21 @@ fun SettingsScreen(
         navigationIcon = navigationIcon,
         layoutParameters = layoutParameters,
         loadOpenSourceLibrariesJsons = loadOpenSourceLibrariesJsons,
+        onSystemBack = appBackOnDetailPane,
     )
+}
+
+/**
+ * 设置页直接打开到某个 tab 且为单页模式, 仍停留在该 tab 详情页时, 返回应弹出 app 路由 (回到打开设置页之前的页面).
+ *
+ * 其余情况 (双页, 未直接打开到 tab, 已进入设置列表等) 返回 `false`, 使用设置页内部的返回行为.
+ */
+internal fun shouldPopAppRouteOnBack(
+    openedDirectlyOnTab: Boolean,
+    isSinglePane: Boolean,
+    currentRole: ThreePaneScaffoldRole?,
+): Boolean {
+    return openedDirectlyOnTab && isSinglePane && currentRole == ListDetailPaneScaffoldRole.Detail
 }
 
 @Composable
@@ -502,6 +528,7 @@ internal fun SettingsPageLayout(
     layoutParameters: ListDetailLayoutParameters = ListDetailLayoutParameters.calculate(navigator.scaffoldDirective),
     navigationIcon: @Composable () -> Unit = {},
     loadOpenSourceLibrariesJsons: suspend () -> List<ByteArray>,
+    onSystemBack: (() -> Unit)? = null,
 ) = SettingsPageSurface(containerColor) {
     val layoutParametersState by rememberUpdatedState(layoutParameters)
 
@@ -965,6 +992,7 @@ internal fun SettingsPageLayout(
         modifier,
         layoutParameters = layoutParameters,
         contentWindowInsets = contentWindowInsets,
+        onSystemBack = onSystemBack,
     )
 }
 
@@ -1154,6 +1182,7 @@ abstract class SettingsDrawerScope internal constructor() : ColumnScope {
 private fun getIcon(tab: SettingsTab): ImageVector {
     return when (tab) {
         SettingsTab.PROFILE -> Icons.Outlined.AccountCircle
+        SettingsTab.TRACKING -> Icons.Outlined.AccountCircle
         SettingsTab.APPEARANCE -> Icons.Outlined.SettingsApplications
         SettingsTab.THEME -> Icons.Outlined.Palette
         SettingsTab.UPDATE -> Icons.Outlined.Update
@@ -1177,6 +1206,7 @@ private fun getIcon(tab: SettingsTab): ImageVector {
 private fun getName(tab: SettingsTab): String {
     return when (tab) {
         SettingsTab.PROFILE -> stringResource(Lang.settings_tab_account)
+        SettingsTab.TRACKING -> stringResource(Lang.settings_tab_tracking)
         SettingsTab.APPEARANCE -> stringResource(Lang.settings_tab_appearance)
         SettingsTab.THEME -> stringResource(Lang.settings_tab_theme)
         SettingsTab.PLAYER -> stringResource(Lang.settings_tab_player)

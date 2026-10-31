@@ -1,0 +1,85 @@
+/*
+ * Copyright (C) 2024-2026 OpenAni and contributors.
+ *
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
+ *
+ * https://github.com/open-ani/ani/blob/main/LICENSE
+ */
+
+package me.him188.ani.app.ui.settings
+
+import kotlinx.io.Buffer
+import kotlin.random.Random
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFails
+
+class BackupCompressionTest {
+    @Test
+    fun rawFileAndExpandedContentsHaveSeparateCaps() {
+        assertEquals(10 * 1024 * 1024, MAX_BACKUP_FILE_BYTES)
+        assertEquals(32 * 1024 * 1024, MAX_BACKUP_BYTES)
+    }
+
+    @Test
+    fun compressedBackupRoundTrips() {
+        val content = """{"danmakuEnabled":true,"tracking":{"bindings":[]}}""".encodeToByteArray()
+        val compressed = compressBackup(content)
+
+        assertEquals(0x1f.toByte(), compressed[0])
+        assertEquals(0x8b.toByte(), compressed[1])
+        assertContentEquals(content, decompressBackup(compressed))
+    }
+
+    @Test
+    fun roundTripsContentLargerThanOneChunk() {
+        val content = Random(42).nextBytes(100_000)
+        assertContentEquals(content, decompressBackup(compressBackup(content)))
+    }
+
+    @Test
+    fun rejectsBackupThatExpandsBeyondLimit() {
+        val compressed = compressBackup(ByteArray(10_000))
+        assertFails { decompressBackup(compressed, maxBytes = 1_000) }
+    }
+
+    @Test
+    fun boundedBackupReadAllowsLimitAndRejectsFirstByteOver() {
+        fun source(bytes: ByteArray) = Buffer().apply { write(bytes, 0, bytes.size) }
+
+        assertContentEquals(byteArrayOf(1, 2, 3), readBackupBytes(source(byteArrayOf(1, 2, 3)), maxBytes = 3))
+        val oversized = source(byteArrayOf(1, 2, 3, 4, 5, 6))
+        assertFails { readBackupBytes(oversized, maxBytes = 3) }
+        assertEquals(2L, oversized.size)
+    }
+
+    @Test
+    fun boundedBackupReadKeepsSmallSourcesExactWithoutMaxSizeAllocation() {
+        val content = byteArrayOf(9, 8, 7)
+        val source = Buffer().apply { write(content, 0, content.size) }
+
+        // A max-size buffer for Int.MAX_VALUE - 1 bytes would exhaust memory; reading must stay proportional to input.
+        assertContentEquals(content, readBackupBytes(source, maxBytes = Int.MAX_VALUE - 1))
+    }
+
+    @Test
+    fun boundedBackupReadRejectsMultiChunkOversizedSource() {
+        val oversized = Buffer().apply { write(Random(7).nextBytes(100_000), 0, 100_000) }
+        assertFails { readBackupBytes(oversized, maxBytes = 1_000) }
+    }
+
+    @Test
+    fun backupTextLimitCountsUtf8Bytes() {
+        requireBackupTextSize("abc", maxBytes = 3)
+        assertFails { requireBackupTextSize("猫", maxBytes = 2) }
+        assertFails { requireBackupTextSize("😀", maxBytes = 3) }
+    }
+
+    @Test
+    fun rejectsCorruptData() {
+        val compressed = compressBackup(Random(1).nextBytes(10_000))
+        assertFails { decompressBackup(compressed.copyOf(compressed.size / 2)) }
+    }
+}

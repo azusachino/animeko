@@ -25,6 +25,8 @@ kotlin {
         namespace = "me.him188.ani.app.application"
     }
     sourceSets.commonMain.dependencies {
+        implementation(projects.tracking.api)
+        implementation(projects.tracking.anilist)
         api(projects.app.shared.appPlatform)
         api(projects.app.shared.uiFoundation)
         api(projects.app.shared)

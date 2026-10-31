@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ComposeUIViewController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -35,10 +36,28 @@ import kotlinx.io.files.SystemFileSystem
 import me.him188.ani.app.data.persistent.database.AniDatabase
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.data.repository.user.UserRepository
+import me.him188.ani.app.data.tracking.AniListTrackingSource
+import me.him188.ani.app.data.tracking.TrackingBindingStore
+import me.him188.ani.app.domain.episode.EpisodeTrackingSync
 import me.him188.ani.app.domain.foundation.HttpClientProvider
 import me.him188.ani.app.domain.foundation.get
 import me.him188.ani.app.domain.media.cache.engine.AlwaysUseTorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.HttpMediaCacheEngine
+import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
+import me.him188.ani.app.ios.tracking.IosAniListAccountConnector
+import me.him188.ani.app.ios.tracking.IosAniListBindingStore
+import me.him188.ani.app.ios.tracking.IosRegistryEpisodeTrackingSync
+import me.him188.ani.app.ios.tracking.IosTrackingCredentialStore
+import me.him188.ani.app.tracking.anilist.AniListTrackingProvider
+import me.him188.ani.app.tracking.anilist.parseAniListOAuthRedirect
+import me.him188.ani.app.tracking.anilist.createAniListHttpClient
+import me.him188.ani.app.ui.foundation.icons.AniListTrackingIcon
+import me.him188.ani.app.ui.foundation.icons.TrackingIconRenderer
+import me.him188.ani.app.ui.foundation.tracking.TrackingAccountConnector
+import me.him188.ani.tracking.api.TrackingSource
+import me.him188.ani.utils.ktor.getPlatformKtorEngine
+import me.him188.ani.utils.logging.logger
+import me.him188.ani.utils.logging.warn
 import me.him188.ani.app.domain.media.cache.engine.TorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.storage.MediaSaveDirProvider
 import me.him188.ani.app.domain.media.download.MediaDownloadManager
@@ -62,6 +81,7 @@ import me.him188.ani.app.navigation.BrowserNavigator
 import me.him188.ani.app.navigation.IosBrowserNavigator
 import me.him188.ani.app.navigation.LocalNavigator
 import me.him188.ani.app.platform.AniHostingUIViewController
+import me.him188.ani.app.platform.ANILIST_PENDING_SYNC_STORE
 import me.him188.ani.app.platform.AppStartupTasks
 import me.him188.ani.app.platform.GrantedPermissionManager
 import me.him188.ani.app.platform.IosContext
@@ -102,6 +122,7 @@ import me.him188.ani.utils.logging.error
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.annotations.TestOnly
 import org.koin.core.context.startKoin
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.openani.mediamp.MediampPlayerFactory
 import org.openani.mediamp.ffmpeg.FFmpegKit
@@ -124,6 +145,7 @@ class AniIosApplication(
     val aniNavigator: AniNavigator,
     val onBackPressedDispatcherOwner: SkikoOnBackPressedDispatcherOwner,
     private val scope: CoroutineScope,
+    private val aniListConnector: IosAniListAccountConnector? = null,
 ) {
     /**
      * 处理打开 App 的 `ani://` 链接. 由 Swift 的 `onOpenURL` 调用.
@@ -133,15 +155,37 @@ class AniIosApplication(
     @Suppress("unused") // used in Swift
     fun openUrl(url: String): Boolean {
         // 扫码登录: 系统相机扫描电视上的二维码后, 网页跳转到 ani://qr-login?requestId=...
-        val qrLoginRequestId = QrLoginRepository.parseRequestId(url) ?: return false
-        scope.launch(Dispatchers.Main) {
-            if (!aniNavigator.isBackStackReady()) {
-                aniNavigator.awaitBackStack()
-                delay(1000) // 等待初始化好, 否则跳转可能无效
+        val qrLoginRequestId = QrLoginRepository.parseRequestId(url)
+        if (qrLoginRequestId != null) {
+            scope.launch(Dispatchers.Main) {
+                if (!aniNavigator.isBackStackReady()) {
+                    aniNavigator.awaitBackStack()
+                    delay(1000) // 等待初始化好, 否则跳转可能无效
+                }
+                aniNavigator.navigateQrLoginConfirm(qrLoginRequestId)
             }
-            aniNavigator.navigateQrLoginConfirm(qrLoginRequestId)
+            return true
         }
-        return true
+
+        // AniList OAuth 重定向: ani://anilist-auth#access_token=...
+        val aniListToken = parseAniListOAuthRedirect(url)
+        if (aniListToken != null) {
+            val connector = aniListConnector ?: return false
+            scope.launch(Dispatchers.Default) {
+                try {
+                    connector.completeRedirect(aniListToken)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    logger<AniIosApplication>().warn {
+                        "AniList sign-in failed: ${failure::class.simpleName}"
+                    }
+                }
+            }
+            return true
+        }
+
+        return false
     }
 }
 
@@ -229,6 +273,7 @@ fun startIosApp(): AniIosApplication {
         aniNavigator = aniNavigator,
         onBackPressedDispatcherOwner = onBackPressedDispatcherOwner,
         scope = scope,
+        aniListConnector = koin.getOrNull<IosAniListAccountConnector>(),
     )
 }
 
@@ -336,6 +381,20 @@ fun getIosModules(
     defaultTorrentCacheDir: SystemPath,
     coroutineScope: CoroutineScope,
 ) = module {
+    single {
+        AniListTrackingProvider(
+            createAniListHttpClient(getPlatformKtorEngine()),
+            IosTrackingCredentialStore(AniListTrackingProvider.ID),
+        )
+    }
+    single { AniListTrackingSource(IosAniListBindingStore(), get<AniListTrackingProvider>(), inject()) }
+    single<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE)) { IosAniListBindingStore(prefix = "anilist-pending-sync:") }
+    single<TrackingSource> { get<AniListTrackingSource>() }
+    single { IosAniListAccountConnector(get<AniListTrackingProvider>()) }
+    single<TrackingAccountConnector> { get<IosAniListAccountConnector>() }
+    single<TrackingIconRenderer> { AniListTrackingIcon(AniListTrackingProvider.ID) }
+    single<EpisodeTrackingSync> { IosRegistryEpisodeTrackingSync(get<TrackingEpisodeSynchronizer>(), coroutineScope) }
+
     single<TorrentEngineAccess> { AlwaysUseTorrentEngineAccess }
 
     single<PermissionManager> {

@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.him188.ani.app.data.models.danmaku.DanmakuConfigSerializer
@@ -76,6 +77,7 @@ import me.him188.ani.app.ui.settings.framework.SettingsState
 import me.him188.ani.app.ui.settings.tabs.about.AboutTabInfo
 import me.him188.ani.app.ui.settings.tabs.app.SoftwareUpdateGroupState
 import me.him188.ani.app.ui.settings.tabs.media.CacheDirectoryGroupState
+import me.him188.ani.app.ui.settings.tabs.media.BackupSelection
 import me.him188.ani.app.ui.settings.tabs.media.MediaSelectionGroupState
 import me.him188.ani.app.ui.settings.tabs.media.PikPakDriveUsageState
 import me.him188.ani.app.ui.settings.tabs.media.PikPakLegacyNoticeState
@@ -94,8 +96,12 @@ import me.him188.ani.app.ui.settings.tabs.network.toDataSettings
 import me.him188.ani.app.ui.settings.tabs.network.toUIConfig
 import me.him188.ani.app.ui.user.SelfInfoStateProducer
 import me.him188.ani.danmaku.ui.DanmakuConfig
+import me.him188.ani.tracking.api.TrackingBindingBackup
+import me.him188.ani.tracking.api.TrackingBackupValidationException
+import me.him188.ani.tracking.api.TrackingBindingRecord
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.coroutines.SingleTaskExecutor
+import me.him188.ani.utils.logging.warn
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -162,9 +168,10 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
     val cacheDirectoryGroupState = CacheDirectoryGroupState(
         mediaCacheSettingsState,
         permissionManager,
-        onGetBackupData = {
+        trackingBindingsAvailable = getKoin().getOrNull<TrackingBindingBackup>() != null,
+        onGetBackupData = { selection ->
             withContext(Dispatchers.IO_) {
-                serializeSettingsBackup()
+                serializeSettingsBackup(selection)
             }
         },
         onRestoreSettings = {
@@ -336,8 +343,9 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
         ignoreUnknownKeys = true
     }
 
-    private suspend fun serializeSettingsBackup(): String {
-        val backup = SettingsBackup(
+    private suspend fun serializeSettingsBackup(selection: BackupSelection): String {
+        require(selection.hasContent) { "Select at least one backup category" }
+        val settings = if (selection.settings) SettingsBackup(
             danmakuEnabled = settingsRepository.danmakuEnabled.flow.first(),
             danmakuConfig = settingsRepository.danmakuConfig.flow.first(),
             danmakuFilterConfig = settingsRepository.danmakuFilterConfig.flow.first(),
@@ -367,14 +375,32 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
             // ignores it for the same reason.
             pikpakConfig = PikPakConfig.Default,
             tokenStore = tokenRepository.getTokenSaveSnapshot(),
-        )
-
-        return json.encodeToString(SettingsBackup.serializer(), backup)
+        ) else SettingsBackup()
+        val tracking = if (selection.trackingBindings) TrackingBackupSection(
+            getKoin().get<TrackingBindingBackup>().exportBindings().map {
+                TrackingBindingSave(it.providerId, it.accountId, it.subjectId, it.mediaId)
+            },
+        ) else null
+        // Settings stay flat at the top level so builds that predate `tracking` still restore them;
+        // they ignore the unknown key (ignoreUnknownKeys = true).
+        val content = json.encodeToString(SettingsBackup.serializer(), settings.copy(tracking = tracking))
+        requireBackupTextSize(content)
+        return content
     }
 
     @Suppress("DuplicatedCode")
     private suspend fun restoreSettingsBackup(content: String): Boolean {
-        val backup = json.decodeFromString(SettingsBackup.serializer(), content)
+        requireBackupTextSize(content)
+        val backup = json.decodeFromJsonElement(SettingsBackup.serializer(), json.parseToJsonElement(content))
+        backup.tracking?.let { checkTrackingBackupVersion(it.version) }
+        val savedBindings = backup.tracking?.bindings
+        val bindingBackup = getKoin().getOrNull<TrackingBindingBackup>()
+        require(savedBindings.isNullOrEmpty() || bindingBackup != null) { "Tracking backup is unavailable" }
+        savedBindings?.let { saved ->
+            bindingBackup?.validateBindings(saved.map {
+                TrackingBindingRecord(it.providerId, it.accountId, it.subjectId, it.mediaId)
+            })
+        }
 
         backup.danmakuEnabled?.let { settingsRepository.danmakuEnabled.set(it) }
         backup.danmakuConfig?.let { settingsRepository.danmakuConfig.set(it) }
@@ -404,10 +430,37 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
         // credentials, and we don't want a restore to silently re-introduce
         // them on a different device.
         backup.tokenStore?.let { tokenRepository.restoreFromTokenSave(it) }
+        savedBindings?.let { saved ->
+            val records = saved.map {
+                TrackingBindingRecord(it.providerId, it.accountId, it.subjectId, it.mediaId)
+            }
+            bindingBackup?.applyValidatedBindings(records)
+            val inert = bindingBackup?.countUnconnectedBindings(records) ?: 0
+            if (inert > 0) {
+                logger.warn { "Restored $inert tracking bindings for accounts that are not signed in; they stay inert until the account connects" }
+            }
+        }
 
         return true
     }
 }
+
+internal const val TRACKING_BACKUP_VERSION = 1
+
+/** Rejects a tracking section written by a newer format before anything is applied. */
+internal fun checkTrackingBackupVersion(version: Int) {
+    if (version > TRACKING_BACKUP_VERSION) {
+        throw TrackingBackupValidationException(
+            "Tracking backup format v$version is newer than this app supports (v$TRACKING_BACKUP_VERSION); update Animeko to restore tracking",
+        )
+    }
+}
+
+@Serializable
+private data class TrackingBackupSection(
+    val bindings: List<TrackingBindingSave>,
+    @EncodeDefault val version: Int = TRACKING_BACKUP_VERSION,
+)
 
 private fun Map<String, ServiceConnectionTester.TestState>.toUIState(): List<ProxyTestItem> {
     return buildList {
@@ -430,30 +483,38 @@ private fun Map<String, ServiceConnectionTester.TestState>.toUIState(): List<Pro
 
 @Serializable
 private data class SettingsBackup(
-    val danmakuEnabled: Boolean?,
-    @Serializable(with = DanmakuConfigSerializer::class) val danmakuConfig: DanmakuConfig?,
-    val danmakuFilterConfig: DanmakuFilterConfig?,
-    // 新增字段必须带默认值: 否则旧版本导出的备份 (没有这个键) 会因 MissingFieldException 而导入失败
+    val danmakuEnabled: Boolean? = null,
+    @Serializable(with = DanmakuConfigSerializer::class) val danmakuConfig: DanmakuConfig? = null,
+    val danmakuFilterConfig: DanmakuFilterConfig? = null,
     val danmakuTextConversionOverrides: DanmakuTextConversionOverrides? = null,
     val danmakuRegexFilters: List<DanmakuRegexFilter>? = null,
-    val mediaSelectorSettings: MediaSelectorSettings?,
-    val defaultMediaPreference: MediaPreference?,
-    val profileSettings: ProfileSettings?,
-    val proxySettings: ProxySettings?,
-    val mediaCacheSettings: MediaCacheSettings?,
-    val danmakuSettings: DanmakuSettings?,
-    val uiSettings: UISettings?,
-    val themeSettings: ThemeSettings?,
-    val updateSettings: UpdateSettings?,
-    val videoScaffoldConfig: VideoScaffoldConfig?,
+    val mediaSelectorSettings: MediaSelectorSettings? = null,
+    val defaultMediaPreference: MediaPreference? = null,
+    val profileSettings: ProfileSettings? = null,
+    val proxySettings: ProxySettings? = null,
+    val mediaCacheSettings: MediaCacheSettings? = null,
+    val danmakuSettings: DanmakuSettings? = null,
+    val uiSettings: UISettings? = null,
+    val themeSettings: ThemeSettings? = null,
+    val updateSettings: UpdateSettings? = null,
+    val videoScaffoldConfig: VideoScaffoldConfig? = null,
     val playerKernelConfig: PlayerKernelConfig? = null,
-    val videoResolverSettings: VideoResolverSettings?,
-    val anitorrentConfig: AnitorrentConfig?,
-    val torrentPeerConfig: TorrentPeerConfig?,
-    val oneshotActionConfig: OneshotActionConfig?,
-    val analyticsSettings: AnalyticsSettings?,
-    val debugSettings: DebugSettings?,
+    val videoResolverSettings: VideoResolverSettings? = null,
+    val anitorrentConfig: AnitorrentConfig? = null,
+    val torrentPeerConfig: TorrentPeerConfig? = null,
+    val oneshotActionConfig: OneshotActionConfig? = null,
+    val analyticsSettings: AnalyticsSettings? = null,
+    val debugSettings: DebugSettings? = null,
     val pikpakConfig: PikPakConfig? = null,
     val notificationSettings: NotificationSettings? = null,
-    val tokenStore: TokenSave?
+    val tokenStore: TokenSave? = null,
+    val tracking: TrackingBackupSection? = null,
+)
+
+@Serializable
+private data class TrackingBindingSave(
+    val providerId: String,
+    val accountId: String,
+    val subjectId: Int,
+    val mediaId: String,
 )

@@ -1,0 +1,143 @@
+/*
+ * Copyright (C) 2024-2026 OpenAni and contributors.
+ *
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
+ *
+ * https://github.com/open-ani/ani/blob/main/LICENSE
+ */
+
+package me.him188.ani.tracking.api
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+
+/** One account-scoped tracking implementation. The UI only sees [TrackingSnapshot]. */
+interface TrackingSource : TrackingBindingBackup {
+    val info: TrackingProviderInfo
+    val connection: Flow<TrackingAccountState>
+    val presentation: Flow<TrackingSourcePresentation>
+        get() = flowOf(TrackingSourcePresentation(info.displayName))
+    val capabilities: TrackingSourceCapabilities
+    val statusOptions: List<TrackingStatusOption>
+    val scoreOptions: List<TrackingScoreOption>
+
+    /** Emits local changes as well as the initial remote state. Null means no media match. */
+    fun observe(subjectId: Int): Flow<TrackingSnapshot?>
+
+    /** Drops any cached remote read for [subjectId]; the next [observe] reads it again. */
+    fun invalidate(subjectId: Int) {}
+
+    /** Empty for a source whose media ID is the Animeko subject ID. */
+    suspend fun search(query: String): List<TrackingMedia> = emptyList()
+
+    /** Keeps an existing remote entry intact when a match is first selected. */
+    suspend fun bind(subjectId: Int, mediaId: TrackingMediaId): TrackingSnapshot
+
+    suspend fun edit(subjectId: Int, edit: TrackingEdit): TrackingSnapshot
+
+    /** Removes only the local match; remote deletion is a separate edit. */
+    suspend fun unlink(subjectId: Int)
+
+    /** Called after Animeko has recorded a watched episode. Local sources may ignore it. */
+    suspend fun episodeWatched(subjectId: Int, episodeId: Int) {}
+
+    override fun exportBindings(): List<TrackingBindingRecord> = emptyList()
+
+    override suspend fun validateBindings(records: List<TrackingBindingRecord>) {
+        require(records.isEmpty()) { "This tracking source has no stored title matches" }
+    }
+
+    override fun applyValidatedBindings(records: List<TrackingBindingRecord>) {
+        require(records.isEmpty()) { "This tracking source has no stored title matches" }
+    }
+}
+
+data class TrackingSourcePresentation(val name: String)
+
+data class TrackingSourceCapabilities(
+    val needsMatchSearch: Boolean = false,
+    val canEditStatus: Boolean = true,
+    val canEditProgress: Boolean = true,
+    val canEditScore: Boolean = true,
+    val canEditDates: Boolean = false,
+    val canEditPrivacy: Boolean = false,
+    val canDeleteRemoteEntry: Boolean = false,
+)
+
+data class TrackingEpisode(val id: Int, val number: String, val watched: Boolean)
+
+data class TrackingSnapshot(
+    val media: TrackingMedia,
+    /** A match may remain after the remote list entry has been deleted. */
+    val entry: TrackingListEntry?,
+    /** Present when the source has per-episode state; null for cumulative-progress services. */
+    val episodes: List<TrackingEpisode>? = null,
+)
+
+sealed interface TrackingEdit {
+    data class Status(val value: TrackingStatus) : TrackingEdit
+    data class Progress(val value: Int) : TrackingEdit
+    data class Episode(val episodeId: Int, val watched: Boolean) : TrackingEdit
+    data object MarkAllEpisodesWatched : TrackingEdit
+    data class Score(val value: TrackingScore) : TrackingEdit
+    data class Date(val field: TrackingDateField, val value: TrackingDate?) : TrackingEdit
+    data class Privacy(val isPrivate: Boolean) : TrackingEdit
+    data object DeleteRemoteEntry : TrackingEdit
+}
+
+interface TrackingRegistry : TrackingBindingBackup {
+    val sources: List<TrackingSource>
+}
+
+class DefaultTrackingRegistry(override val sources: List<TrackingSource>) : TrackingRegistry {
+    init {
+        require(sources.map { it.info.id }.distinct().size == sources.size) { "Duplicate tracking source ID" }
+    }
+
+    override fun exportBindings(): List<TrackingBindingRecord> = sources.flatMap { it.exportBindings() }
+
+    override fun applyValidatedBindings(records: List<TrackingBindingRecord>) {
+        records.groupBy { it.providerId }.forEach { (id, sourceRecords) ->
+            sources.first { it.info.id.value == id }.applyValidatedBindings(sourceRecords)
+        }
+    }
+
+    override fun countUnconnectedBindings(records: List<TrackingBindingRecord>): Int = sources.sumOf { source ->
+        source.countUnconnectedBindings(records.filter { it.providerId == source.info.id.value })
+    }
+
+    override suspend fun validateBindings(records: List<TrackingBindingRecord>) {
+        val sourcesById = sources.associateBy { it.info.id.value }
+        if (records.any { it.providerId !in sourcesById }) {
+            throw TrackingBackupValidationException("Backup requires a tracking service unavailable in this app")
+        }
+        records.groupBy { it.providerId }.forEach { (id, sourceRecords) ->
+            sourcesById.getValue(id).validateBindings(sourceRecords)
+        }
+    }
+}
+
+/** Non-secret title matches that may be transferred to another device. */
+data class TrackingBindingRecord(
+    val providerId: String,
+    val accountId: String,
+    val subjectId: Int,
+    val mediaId: String,
+)
+
+interface TrackingBindingBackup {
+    fun exportBindings(): List<TrackingBindingRecord>
+    suspend fun validateBindings(records: List<TrackingBindingRecord>)
+    fun applyValidatedBindings(records: List<TrackingBindingRecord>)
+
+    /** How many of [records] belong to an account that is not currently signed in, so they stay inert. */
+    fun countUnconnectedBindings(records: List<TrackingBindingRecord>): Int = 0
+
+    suspend fun restoreBindings(records: List<TrackingBindingRecord>) {
+        validateBindings(records)
+        applyValidatedBindings(records)
+    }
+}
+
+class TrackingBackupValidationException(message: String) : IllegalArgumentException(message)

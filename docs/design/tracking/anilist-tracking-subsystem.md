@@ -1,0 +1,185 @@
+# 可扩展追踪子系统与 AniList 首个实现
+
+> 关联议题：[open-ani/animeko#3427](https://github.com/open-ani/animeko/issues/3427)
+
+## 目标
+
+Animeko 需要的是一个完整的追踪子系统，而不是只够调用 AniList 的 GraphQL 客户端。AniList 是第一个实现；后续追踪服务复用账号、搜索、绑定、刷新、编辑和同步流程，只提供服务自身的认证、状态、评分和远端 API 映射。
+
+平台范围：Android、macOS Desktop、iOS。Windows 不在支持范围内，不注册 AniList 入口，也不实现其凭据存储与 OAuth 回调。
+
+## 主要参考：Mihon
+
+设计以 Mihon 的追踪实现为行为参考。研究基准固定为 Mihon revision [`f52d890`](https://github.com/mihonapp/mihon/tree/f52d890)。重点参考：
+
+- [`Tracker.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/tachiyomi/data/track/Tracker.kt)：服务能力、账号状态、状态/评分、搜索、绑定、刷新和更新的统一门面。
+- [`BaseTracker.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/tachiyomi/data/track/BaseTracker.kt)：登录状态、用户资料刷新和阅读进度触发的状态转换。
+- [`TrackerManager.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/tachiyomi/data/track/TrackerManager.kt)：追踪服务注册表及已登录服务筛选。
+- [`Anilist.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/tachiyomi/data/track/anilist/Anilist.kt)：AniList 状态、五种评分格式、登录、绑定和更新规则。
+- [`AnilistApi.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/tachiyomi/data/track/anilist/AnilistApi.kt)：GraphQL 查询、更新、删除及 `POINT_100` 内部评分。
+- [`AddTracks.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/domain/track/interactor/AddTracks.kt)：本地绑定写入边界。
+- [`RefreshTracks.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/domain/track/interactor/RefreshTracks.kt)：刷新远端状态后更新本地记录。
+- [`SyncChapterProgressWithTrack.kt`](https://github.com/mihonapp/mihon/blob/f52d890/app/src/main/java/eu/kanade/domain/track/interactor/SyncChapterProgressWithTrack.kt)：阅读进度触发同步时的单调性保护。
+
+AniList 协议细节以[官方 API 文档](https://docs.anilist.co/)为准，尤其是[认证](https://docs.anilist.co/guide/auth/)和[限流](https://docs.anilist.co/guide/rate-limiting)。Mihon 是产品工作流参考，AniList 官方文档是协议事实来源。
+
+## 从 Mihon 继承的结构
+
+| Mihon 概念 | Animeko 对应 | 说明 |
+|---|---|---|
+| `Tracker` | `TrackingProvider` | 一个服务的完整门面，不拆成互不关联的 CRUD 与账号接口。 |
+| `id`, `name`, logo | `TrackingProviderInfo` + UI 资源映射 | common code 不暴露 Android drawable ID。 |
+| `supportsReadingDates`, `supportsPrivateTracking` | `TrackingCapabilities` | UI 只展示服务实际支持的字段。 |
+| `isLoggedInFlow`, 用户刷新 | `TrackingAccountState` | Accounts UI 观察登录、刷新及用户资料。 |
+| status list | `TrackingStatusOption` | common code 保留统一状态，provider 提供显示选项和远端映射。 |
+| score list/conversion | `TrackingScoreOption` + 0–100 `TrackingScore` | 沿用 Mihon AniList 的五种显示格式和 0–100 内部表示。 |
+| `search` | `search` | 返回远端条目及绑定选择所需信息。 |
+| `bind` | `prepareBinding` + 明确 reconciliation + `bind` | 先刷新远端状态，再由用户选择合并策略。 |
+| `update(..., didReadChapter)` | `update(..., didWatchEpisode)` | 复用 watching/completed/rewatching 状态转换。 |
+| `refresh` | `refresh` | 远端状态是刷新来源，不以旧本地缓存冒充成功。 |
+| `DeletableTracker.delete` | `delete` | 远端删除与本地解除绑定是两个操作。 |
+| `TrackerManager` | `TrackingRegistry` | Track sheet 与观看同步从同一注册表发现 source；账号中心与 Track sheet 通过 `TrackingAccountRegistry` 发现各服务的登录动作。 |
+
+## 有意不照搬 Mihon 的部分
+
+### 绑定已有条目时保留远端状态
+
+Mihon 的 `Anilist.bind` 会把远端个人状态复制到待绑定对象，再立即更新远端。Animeko 在用户选中标题后读取远端条目；已有条目原样保留，无第二次确认或写入。只有尚无远端条目时才建立计划观看条目。
+
+`prepareBinding` 负责读取已有状态，source 的 `bind` 负责匹配记录及必要的新条目创建。之后用户主动编辑才覆盖状态、进度和评分。
+
+### 追踪凭据独立于 Animeko 会话与备份
+
+Mihon 通过 tracker preferences 保存凭据。Animeko 的约束更严格：token 不进入 Room、日志、截图、普通设置导出或备份。
+
+Android 使用：
+
+- Android Keystore 中不可导出的 AES-256 key；
+- AES-GCM authenticated encryption；
+- `noBackupFilesDir` 中的原子 ciphertext 文件；
+- provider-scoped `TrackingCredentialStore`；
+- logout 删除 ciphertext，并写入非机密的主动退出标记（同目录 marker 文件）；登录成功时清除该标记。服务端拒绝会话不写入该标记。
+
+`utils/io` 的 `obscure` 只是带硬编码 key 的防窥混淆，不能用于追踪 token。
+
+`TrackingCredentialStore` 是 provider-scoped 的读、写、删除边界。稳定的 `TrackingProviderId` 是存储键；新增追踪服务使用同一个桌面存储，不扩展 Animeko/Bangumi 的 `TokenSave`。macOS Desktop 将追踪 token 保存于独立的 DataStore 文件，目录限制为当前用户访问；文件内容没有 Keychain 静态加密保护。该 DataStore 不进入设置快照、追踪匹配备份、日志或 UI。非机密的账号与标题匹配 ID 保存在 Java Preferences。
+
+iOS 将 token 以明文保存在 `NSUserDefaults`，按 provider 隔离且不进入 Animeko 备份，但没有 Keychain 加密，并会随系统设备备份及 iCloud 备份一同保存。
+
+### KMP common code 不依赖 Android 类型
+
+Mihon 的 `Tracker` 直接返回 drawable 与 string resource。Animeko common contract 使用稳定 ID 和显示模型，品牌图标及本地化文本由 presentation layer 映射。
+
+### 不复制 Mihon 的 service locator
+
+网络客户端、凭据存储和本地 repository 都通过 Animeko 的依赖注入提供。Provider DTO 不引用 Room entity、Compose state 或平台 Context。
+
+## AniList 行为基线
+
+AniList provider 必须具备：
+
+1. 使用 `Viewer` 验证 token，并读取账号 ID、显示名、头像和 `scoreFormat`。账号刷新在 5 分钟内复用上一次成功验证或非授权失败的结果；授权失败会清除登录状态与凭据。`login` 总是调用服务器。
+2. 支持 `CURRENT`、`COMPLETED`、`PAUSED`、`DROPPED`、`PLANNING`、`REPEATING`。
+3. 支持 `POINT_100`、`POINT_10`、`POINT_10_DECIMAL`、`POINT_5`、`POINT_3`；内部统一为 0–100。
+4. 搜索 `ANIME`，返回 AniList ID、标题、封面、总集数和 canonical URL。
+5. 绑定前读取已有 `mediaListEntry`。
+6. 保存后以服务返回值刷新本地状态。
+7. 删除前解析 list-entry ID；没有远端 entry 时删除是幂等成功。
+8. 传播 coroutine cancellation；区分未授权、限流和其他远端失败。
+9. 自动同步不改变本地 Animeko 操作的成功结果，并且只能推进到最新期望状态。
+
+### AniList API 限流
+
+[AniList 官方限流文档](https://docs.anilist.co/guide/rate-limiting)规定：常规上限为 **90 requests/minute**。服务降级时，文档给出的临时上限为 **30 requests/minute**。官方还设置独立的 burst limiter，但没有公布其数值。超限返回 HTTP 429；`Retry-After` 的单位是秒，`X-RateLimit-Reset` 是 Unix 时间戳，超限后须等待再请求。
+
+Animeko 的共享 AniList `HttpClient` 将请求限制为 **25 requests per rolling 60 seconds per client instance**。这是客户端安全上限，不是 AniList 的官方上限；它低于临时降级上限并留出余量。每个平台的 Koin 单例 provider 持有一个 HTTP client，Viewer、读取查询和写入 mutation 共用同一预算；与 Mihon 一样，不区分读写限额。收到 429 后，后续请求至少等待响应中的 `Retry-After`；当前请求不自动重放，避免重复执行写操作。该限制只约束此客户端实例，不合并 Mihon 或其他进程发出的请求。429 错误保留服务端等待时间并在追踪卡片中显示重试指引；初次账号刷新失败且 provider 回到未登录状态时，同样保留该错误卡片。
+
+限流资料必须区分官方上限、官方降级上限和 Animeko 自身上限，并在官方规则变化时同步更新本节及客户端策略。
+
+## 设置备份
+
+备份选择框提供“应用设置”和“追踪匹配关系”两个选项，允许只导出其中一类；追踪选项只在平台提供追踪绑定备份时显示。可保存文件或复制到剪贴板，恢复时可选择文件或剪贴板。文件选择及内容选项参照 Mihon 的 `BackupCreator`；Mihon 的 `.tachibk` 为 gzip 压缩的 protobuf，Animeko 的格式与之不兼容。
+
+- 文件名包含本地时间，格式为 `animeko_YYYY-MM-DD_HH-mm.animekobk`。
+- `.animekobk` 为 gzip 压缩的 JSON；复制到剪贴板的内容为未压缩的 JSON。应用设置字段保持在顶层，旧版本可以恢复它们；追踪匹配关系位于 `tracking` 对象中，其 `version` 总是写出，当前为 `1`。
+- 只选应用设置时 `tracking` 为 `null`。只选追踪匹配关系时应用设置字段为空，只有 `tracking` 有内容；旧版本忽略 `tracking`，因此这类备份不会恢复任何内容。
+- 恢复时，在写入任何设置之前先检查 `tracking.version` 与绑定记录的 `providerId`：`version` 高于当前支持的 `1` 时整个恢复被拒绝，`providerId` 不被本应用识别时同样拒绝。文件以 gzip 魔数判断是否需要解压；未压缩的 JSON 文件、剪贴板内容以及没有 `tracking` 字段的旧版备份同样可以恢复。
+- 保存时，序列化内容不得超过 **32 MiB**，压缩后的文件不得超过 **10 MiB**。恢复时输入文件限制为 **10 MiB**，解压后的内容和纯文本备份限制为 **32 MiB**。文件从流中最多读取 10 MiB 加一个字节，超限即拒绝，不先将任意大小文件完整读入内存。
+- AniList 的非机密标题匹配关系（服务 ID、账号 ID、Animeko 条目 ID、AniList 媒体 ID）随备份导出，导入时按这些键合并到现有匹配。缺少该字段的旧备份仍可导入。备份不包含 AniList token；离线或未登录时也可导入，连接到记录中的 AniList 账号后匹配关系才会显示。
+- Bangumi 使用相同 subject ID，不单独导出匹配关系。Android 原有 `anilist-bindings` preferences 保持兼容。
+- `TrackingRegistry` 汇总所有已注册 source 的绑定记录，并按 `providerId` 将导入记录交回各 source；无本地匹配的 Bangumi source 返回空列表。
+- 新增追踪平台实现 `TrackingSource.exportBindings`、`validateBindings` 和 `applyValidatedBindings`，以自己的存储格式保存绑定，在导出边界转换为 `TrackingBindingRecord`；无需修改备份 UI 或文件结构。
+- 未知 `providerId` 在恢复前被拒绝，避免静默丢失。
+- 备份不包含离线视频或完整观看数据库。应用设置类别包含 Animeko 会话数据，因此备份文件须私密保存；追踪账号 token 不在其中。
+
+## 搜索与人工匹配
+
+人工匹配搜索打开时立即查询预填标题；图标按钮、清除输入按钮和键盘 Search 动作可重新查询，输入变更清除过期结果。通用 `TrackingSection` 提供这些交互，不为 AniList 单独构造搜索表单。
+
+搜索初始词遵循 Animeko 的“显示原名”设置：关闭时先用当前显示的本地化标题；若该查询没有结果，再尝试原名。用户手动改写查询后只执行输入的词，不做第二次自动搜索。搜索结果使用 AniList 返回的封面和标题。
+
+## 模块边界
+
+`tracking/api/TrackingSource.kt` 定义一个账号范围内的追踪源：连接状态、展示信息、能力、状态与评分选项，以及 `observe/search/bind/edit/unlink/episodeWatched`。`TrackingSnapshot` 区分已匹配媒体和远端列表条目；远端条目删除后仍可保留本地匹配。`TrackingEdit` 是类型化命令，UI 不传 Bangumi 或 AniList 的 API 字段。
+
+平台 DI 构造 `DefaultTrackingRegistry`。Bangumi source 使用 Animeko 会话和原有收藏 repository；AniList source 包装 `TrackingProvider`，以账号 ID 与 subject ID 查找匹配。Android 使用 Keystore 账号和 `anilist-bindings`；macOS Desktop 使用独立 DataStore 凭据和 Java Preferences 匹配记录；iOS 使用 NSUserDefaults 分别存储凭据与绑定。存储机制留在 adapter 内，不进入通用卡片。
+
+`TrackingCoordinator` 只通过注册表查找 source，提供观察、搜索、绑定、编辑和解绑入口。`TrackingSection(subjectId, modifier)` 是两种详情页布局的唯一入口。卡片按 capability 绘制状态、进度、评分、日期、私密和删除操作；品牌图标由各平台注册的 `TrackingIconRenderer` 按 `TrackingProviderId` 提供。Bangumi 的离散正片列表与 AniList 的累计数字列表使用同一个选择弹层。完成状态下若 Bangumi 仍有未看剧集，另行询问是否全部标记看过。
+
+`TrackingProviderId` 是用于持久化和注册表查找的开放类型，不使用封闭 enum。每个平台只在自己的实现中声明一次稳定 ID 常量。账号中心遍历已注册的 `TrackingAccountConnector`，由共同的 `TrackingAccountItem` 展示身份与连接状态；连接器提供登录动作和可选详情页。只有实现 `DisconnectableTrackingAccount` 的连接（本设备保存的 AniList token）在此提供断开；Bangumi 绑定属于 Animeko 账号，解绑会影响所有设备，并可能让之后的 Bangumi 登录创建另一个 Animeko 账号，因此仍只在个人资料页管理。
+
+OAuth redirect 由各平台显式声明。三个平台都接收 `ani://anilist-auth` 回调：Android manifest 声明特定 host；macOS Desktop 在应用 bundle 中注册 `ani://` URL Scheme，并通过 `Desktop.setOpenURIHandler` 接收；iOS 注册 `ani://` URL Scheme 并在 `AniIosApplication.openUrl` 中解析。三端共用的解析器要求回调 authority 与注册 URI 完全匹配，再从 fragment 提取 token，拒绝 lookalike host、userinfo、port、path 或 query。任何应用或网页都能触发该 scheme，因此回调只在用户发起登录后的五分钟内被接受一次。
+
+观看 hook 在本地操作成功后调用 domain 层的 `TrackingEpisodeSynchronizer`。AniList source 对正片整数集数执行单调远端进度更新，较新的远端进度不回退；Bangumi source 不重复写入已由本地操作保存的剧集状态。一个 source 失败时 synchronizer 继续执行其余 source，结束后抛出错误供 hook 记录；记录内容只含不含 token 的错误类型。
+
+### 接入新的同步平台
+
+1. 在 `tracking/api` 的通用类型上实现一个 `TrackingSource`，在 adapter 内处理凭据、远端 API、状态与评分转换、匹配存储和能力声明。直接 ID 的服务可以像 Bangumi 一样不提供搜索；需要人工匹配的服务复用通用搜索与绑定界面。
+2. 在平台 DI 中注册 source、账号连接器和图标渲染器。Track sheet 与观看 hook 从 `TrackingRegistry` 发现 source；账号中心与卡片分别从连接器和图标注册表发现平台。通用 UI 不增加服务名分支。需要 OAuth 回调的平台注册对应的 redirect 处理器。
+3. 测试账号恢复、搜索、已有远端条目保护、字段能力、编辑、删除、取消传播、观看进度单调性与失败隔离。用连接设备验证登录、绑定、编辑和重启恢复。失败的观看同步由 `TrackingEpisodeSynchronizer` 的待同步存储统一重试，新服务无需自建队列；`episodeWatched` 必须可重复调用，并以单调写入保证重派发安全。
+
+### 扩展与恢复约束
+
+- 恢复备份时，在写入任何设置或会话数据之前检查 `tracking.version`、追踪服务 ID 与绑定字段。每个 `TrackingSource` 负责验证自己的绑定记录格式；注册表先验证全部记录，再分发写入。导入不访问网络，也不要求追踪账号已连接。绑定按账号 ID 隔离，只有重新连接对应账号后才进入追踪 UI。存储写入失败仍可能留下部分更改；完整事务恢复尚未设计。
+- 搜索结果只属于发起它的查询版本；用户更改搜索词、清除输入或切换追踪服务后，旧请求结果不得重新显示。
+- 观看事件向多个服务分发属于 domain 层；UI coordinator 只处理卡片观察与用户操作。一个服务失败后继续通知其他服务，最后向 hook 报告失败。
+- 账号登录入口由已注册的 `TrackingAccountConnector` 提供。添加服务时注册自己的 provider、source、账号连接器和图标渲染器；通用卡片、账号行、绑定备份格式和观看分发不添加服务名分支。能力关闭时，provider 无需实现日期或隐私编辑。
+- Track 弹层为每个未连接的服务显示该服务自己的登录动作（与设置中的账号行相同）；账号在设置 -> 追踪中连接和断开，弹层不提供账号管理入口。Animeko 未登录时 Bangumi 显示为“使用 Bangumi 登录”，Bangumi OAuth 同时登录 Animeko 并绑定 Bangumi，不引导至通用的 Animeko 登录页。
+
+## 观看状态转换
+
+两个平台都只在观看时推进状态，且只按下列规则转换：
+
+- AniList：标记正片剧集后，进度不小于总集数（总集数已知）时进入已完成；否则计划看的条目进入在看，在看与重复观看的条目保持原状态。已完成的条目保持已完成。进度只随观看 hook 单调增加。
+- Bangumi：计划看的条目在标记正片剧集时进入在看，标记的剧集是该条目排序后的最后一个正片剧集时进入已完成。在看的条目保持在看。
+
+已放弃与暂停的条目在两个平台上都保持原状态，观看 hook 只保存新的进度数，不做任何自动状态变更（包括完成）。取消观看不改变任何条目的状态。两个平台都不会自动标记更早的未看剧集。Bangumi 的进度数是已逐集标记的正片数，AniList 保留一个累计进度数。
+
+## 能力概览
+
+| 能力 | 实现方式 | 边界 |
+|---|---|---|
+| AniList 账号 | Android OAuth 与 Keystore 凭据；macOS Desktop OAuth 回调与独立 DataStore 凭据；iOS Safari OAuth 回调与 NSUserDefaults 凭据 | Windows 不支持。 |
+| AniList 条目 | 手动搜索、绑定、状态、进度、1–10 分、起止日期、隐私、远端删除与本地解绑 | 以 provider 测试覆盖 API 映射与更新。 |
+| 自动观看同步 | 单集完成与“全部标记看过”触发 AniList hook；远端进度较新时不回退 | 失败剧集持久化在待同步存储中，按约束与限制中的重试规则重派发。 |
+| Bangumi | `BangumiTrackingSource` 复用收藏、剧集和评分 repository；Track sheet 显示并编辑三项字段 | Animeko 会话有效时可用；会话未连接 Bangumi 时显示为 Animeko 收藏。 |
+| 扩展能力 | `TrackingSource`、账号连接器和图标渲染器经注册表统一条目 UI、账号 UI 和观看事件入口 | AniList 绑定存储按账号范围保存（Android Preferences / macOS Preferences / iOS NSUserDefaults）。 |
+
+绑定已存在的 AniList 条目保留远端状态，不要求二次确认。AniList source 继续读取原 bindings，避免丢失已有匹配。
+
+## 约束与限制
+
+1. **平台范围**：
+   - 支持：Android、macOS Desktop、iOS。
+   - 排除：Windows（不实现其凭据存储与 OAuth）。
+2. **观看同步重试**：
+   - 任一 source 抛出非取消异常时，该剧集按 `subjectId:episodeId` 保存在平台持久化的待同步存储中。未绑定、非正片、无集数或进度未增加的剧集直接跳过，不排队。用户主动退出 AniList 后（平台存储中的主动退出标记为真，登录成功前保持），剧集直接跳过且不排队，同一 source 已排队的条目也随之清除。其余未登录、AniList 会话被服务端拒绝、标题刷新返回空或远端错误都属于失败。
+   - 重新派发发生在应用启动、之后每次观看前，以及退避周期中。重派发会再次调用所有 source，因此 source 的写入必须单调。
+   - 失败时启动一轮退避周期（已在运行时不另起），依次等待 5、10、20 分钟并重派发，即失败后约 5、15、35 分钟各一次；待同步存储清空时提前结束。
+   - 没有网络状态变化的触发。任一追踪账号进入已登录状态时立即重派发。
+3. **备份边界**：
+   - 备份只导出设置和非机密的媒体匹配关联（ID 映射）；追踪账号 token 与凭据不导出，但应用设置类别包含 Animeko 会话数据。
+   - 备份不包含下载的离线视频或完整历史数据库。
+4. **单调性与冲突解决**：
+   - AniList 的剧集进度单调递增，远端已有更大集数时不回退。
+   - 绑定已存在条目时保留远端已有进度与状态，不强制覆盖。
