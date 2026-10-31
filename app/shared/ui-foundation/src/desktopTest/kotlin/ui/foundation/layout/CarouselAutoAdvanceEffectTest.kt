@@ -10,6 +10,7 @@
 package me.him188.ani.app.ui.foundation.layout
 
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -21,6 +22,7 @@ import androidx.compose.material3.carousel.CarouselState
 import androidx.compose.material3.carousel.HorizontalMultiBrowseCarousel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
@@ -34,6 +36,8 @@ import me.him188.ani.app.ui.foundation.ProvideFoundationCompositionLocalsForTest
 import me.him188.ani.app.ui.framework.runAniComposeUiTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -186,6 +190,54 @@ class CarouselAutoAdvanceEffectTest {
             mainClock.advanceTimeBy(periodMs)
             runOnIdle {
                 assertEquals(2, carouselState.pagerState1.currentPage)
+            }
+        }
+
+    @Test
+    fun `auto-advance - pageCountShrinksDuringAnimation - cancelsAnimationWithoutCrash`() =
+        runAniComposeUiTest {
+            mainClock.autoAdvance = false
+            val testLifecycleOwner = createTestLifecycleOwner(Lifecycle.State.RESUMED)
+            val itemCount = mutableIntStateOf(20)
+
+            val carouselState = CarouselState(0) { itemCount.intValue }
+
+            setContent {
+                ProvideFoundationCompositionLocalsForTest {
+                    CompositionLocalProvider(LocalLifecycleOwner provides testLifecycleOwner) {
+                        CarouselAutoAdvanceEffect(
+                            enabled = true,
+                            carouselState = carouselState,
+                            period = 1_000.milliseconds,
+                            // Slow enough that the animation is still in flight when the list shrinks
+                            animationSpec = tween(durationMillis = 2_000),
+                        )
+                    }
+                    TestCarousel(carouselState)
+                }
+            }
+
+            // The period elapses and the animation to page 1 starts
+            mainClock.advanceTimeBy(1_100)
+            runOnIdle {
+                assertTrue(carouselState.isScrollInProgress, "auto-advance animation should be in flight")
+            }
+
+            // The item list shrinks to a single page while the animation targets page 1
+            runOnIdle {
+                itemCount.intValue = 1
+            }
+            mainClock.advanceTimeBy(100)
+
+            runOnIdle {
+                assertFalse(carouselState.isScrollInProgress, "in-flight animation should be cancelled")
+                assertEquals(0, carouselState.pagerState1.currentPage)
+            }
+
+            // With a single page there is nothing to advance to
+            mainClock.advanceTimeBy(2_000)
+            runOnIdle {
+                assertEquals(0, carouselState.pagerState1.currentPage)
             }
         }
 

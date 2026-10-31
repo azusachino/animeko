@@ -19,6 +19,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -46,43 +47,51 @@ fun CarouselAutoAdvanceEffect(
     LaunchedEffect(carouselState, lifecycle, animationSpec) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             // 仅在 RESUMED 时自动滚动. 放到后台时不滚动.
-            snapshotFlow { !enabled || carouselState.isScrollInProgress }.collectLatest { skip ->
-                // 当用户正在滚动或者鼠标悬停时, 不自动滚动
-                if (skip) {
-                    return@collectLatest
-                }
+            // 页数变化时, 取消仍在进行中的滚动动画 (其子协程随 coroutineScope 一起取消), 然后按新的页数重新开始.
+            snapshotFlow {
+                @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
+                carouselState.pagerState.pageCount
+            }.collectLatest {
+                coroutineScope {
+                    snapshotFlow { !enabled || carouselState.isScrollInProgress }.collectLatest { skip ->
+                        // 当用户正在滚动或者鼠标悬停时, 不自动滚动
+                        if (skip) {
+                            return@collectLatest
+                        }
 
-                while (currentCoroutineContext().isActive) {
-                    delay(period)
-                    @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
-                    launch(start = CoroutineStart.UNDISPATCHED) {
-                        val pageCount = carouselState.pagerState.pageCount
-                        if (pageCount <= 1) return@launch
+                        while (currentCoroutineContext().isActive) {
+                            delay(period)
+                            @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
+                            launch(start = CoroutineStart.UNDISPATCHED) {
+                                val pageCount = carouselState.pagerState.pageCount
+                                if (pageCount <= 1) return@launch
 
-                        val targetPage = (carouselState.pagerState.currentPage + 1) % pageCount
+                                val targetPage = (carouselState.pagerState.currentPage + 1) % pageCount
 
-                        val pager = carouselState.pagerState
-                        val layoutInfo = pager.layoutInfo
-                        val visiblePagesInfo = layoutInfo.visiblePagesInfo
-                        val lastItem = visiblePagesInfo.lastOrNull() ?: return@launch
+                                val pager = carouselState.pagerState
+                                val layoutInfo = pager.layoutInfo
+                                val visiblePagesInfo = layoutInfo.visiblePagesInfo
+                                val lastItem = visiblePagesInfo.lastOrNull() ?: return@launch
 
-                        // 最后一个元素可见
-                        if (lastItem.index == pager.pageCount - 1) {
-                            // 如果最后一个 page 已经显示了 75% 以上, 说明最后一个元素顶到头了, 并且 pager size 也是填满屏幕的
-                            // 这种情况就不滚动了, 直接回到第一页
-                            if (layoutInfo.viewportEndOffset - lastItem.offset >= layoutInfo.pageSize * 0.75f) {
-                                carouselState.animateScrollToItem(0, animationSpec)
-                            } else {
-                                // 
-                                val scrollOffset =
-                                    layoutInfo.pageSize - (layoutInfo.viewportEndOffset - lastItem.offset)
-                                carouselState.animateScrollBy(scrollOffset.toFloat(), animationSpec)
+                                // 最后一个元素可见
+                                if (lastItem.index == pager.pageCount - 1) {
+                                    // 如果最后一个 page 已经显示了 75% 以上, 说明最后一个元素顶到头了, 并且 pager size 也是填满屏幕的
+                                    // 这种情况就不滚动了, 直接回到第一页
+                                    if (layoutInfo.viewportEndOffset - lastItem.offset >= layoutInfo.pageSize * 0.75f) {
+                                        carouselState.animateScrollToItem(0, animationSpec)
+                                    } else {
+                                        //
+                                        val scrollOffset =
+                                            layoutInfo.pageSize - (layoutInfo.viewportEndOffset - lastItem.offset)
+                                        carouselState.animateScrollBy(scrollOffset.toFloat(), animationSpec)
+                                    }
+                                } else {
+                                    if (targetPage < 0 || targetPage >= carouselState.pagerState.pageCount) {
+                                        return@launch // prevent crash
+                                    }
+                                    carouselState.animateScrollToItem(targetPage, animationSpec)
+                                }
                             }
-                        } else {
-                            if (targetPage < 0 || targetPage >= carouselState.pagerState.pageCount) {
-                                return@launch // prevent crash
-                            }
-                            carouselState.animateScrollToItem(targetPage, animationSpec)
                         }
                     }
                 }
