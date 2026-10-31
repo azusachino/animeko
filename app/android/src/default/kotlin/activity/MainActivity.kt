@@ -68,6 +68,7 @@ class MainActivity : AniComponentActivity(), PictureInPictureHost {
     }
 
     private val externalContentProviderFactory: ExternalContentProviderFactory by inject()
+    private val trackingAuthRedirectRouter: TrackingAuthRedirectRouter by inject()
 
     private val userLeaveHintListeners = CopyOnWriteArrayList<UserLeaveHintListener>()
     private val pipModeChangedListeners = CopyOnWriteArrayList<PIPModeChangedListener>()
@@ -101,6 +102,13 @@ class MainActivity : AniComponentActivity(), PictureInPictureHost {
     private fun handleStartIntent(intent: Intent) {
         val data = intent.data ?: return
         if (data.scheme != "ani") return
+        trackingAuthRedirectRouter.handlerFor(data.host)?.let { handler ->
+            handler.handle(intent, lifecycleScope) { success ->
+                val outcome = if (success) "connected" else "connection failed"
+                Toast.makeText(this, "${handler.providerName} $outcome", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         when (data.host) {
             "subjects", "episodes" -> {
                 val link = EpisodeLink.parse(data.toString()) ?: return
@@ -116,6 +124,7 @@ class MainActivity : AniComponentActivity(), PictureInPictureHost {
                         navigateEpisodeDetails(destination.subjectId, episodeId)
                     }
                 }
+
             }
 
             "qr-login" -> {
