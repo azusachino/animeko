@@ -8,6 +8,7 @@ package me.him188.ani.tracking.api
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import kotlinx.coroutines.sync.Mutex
@@ -16,9 +17,11 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
-import java.io.IOException
-import java.security.GeneralSecurityException
+import java.io.EOFException
+import java.io.UTFDataFormatException
 import java.security.KeyStore
+import java.security.UnrecoverableKeyException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -40,21 +43,16 @@ class AndroidTrackingCredentialStore(
     private val file = AtomicFile(context.noBackupFilesDir.resolve("tracking-${providerId.value}.credentials"))
 
     /**
-     * Returns `null` and deletes the file when it cannot be decrypted, for example after the Keystore key
-     * was lost or the file was corrupted. The token is unrecoverable then, so the user must sign in again.
+     * Returns `null` when the credentials cannot be read. The file is deleted only when [isDefinitelyLost]
+     * says the token is unrecoverable, so the user must sign in again. Other failures, such as Keystore
+     * being unavailable after boot or while locked, keep the file for the next attempt.
      */
     override suspend fun load(): TrackingLoginCredentials? = mutex.withLock {
         if (!file.baseFile.exists()) return null
         try {
             decrypt(file.readFully())
-        } catch (_: GeneralSecurityException) {
-            null
-        } catch (_: IOException) {
-            null
-        } catch (_: IllegalArgumentException) {
-            null
-        } ?: run {
-            file.delete()
+        } catch (failure: Exception) {
+            if (isDefinitelyLost(failure)) file.delete()
             null
         }
     }
@@ -100,6 +98,14 @@ class AndroidTrackingCredentialStore(
 
     override suspend fun clear() = mutex.withLock {
         file.delete()
+        deleteKey()
+    }
+
+    /** Best effort: a missing or unavailable key must not block sign-out. */
+    private fun deleteKey() {
+        runCatching {
+            KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }.deleteEntry(keyAlias)
+        }
     }
 
     private fun cipher(mode: Int, iv: ByteArray? = null): Cipher = Cipher.getInstance(TRANSFORMATION).apply {
@@ -130,6 +136,21 @@ class AndroidTrackingCredentialStore(
     }
 
     private companion object {
+        /**
+         * Whether [failure] proves the stored credentials are unrecoverable. Anything else may be transient.
+         */
+        fun isDefinitelyLost(failure: Exception): Boolean = when (failure) {
+            is KeyPermanentlyInvalidatedException,
+            is UnrecoverableKeyException,
+            is AEADBadTagException,
+            is EOFException,
+            is UTFDataFormatException,
+            is IllegalArgumentException,
+            -> true
+
+            else -> false
+        }
+
         const val FORMAT_VERSION = 1
         const val KEYSTORE_PROVIDER = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
