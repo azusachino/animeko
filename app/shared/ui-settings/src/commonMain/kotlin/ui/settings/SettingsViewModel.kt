@@ -101,6 +101,7 @@ import me.him188.ani.tracking.api.TrackingBackupValidationException
 import me.him188.ani.tracking.api.TrackingBindingRecord
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.coroutines.SingleTaskExecutor
+import me.him188.ani.utils.logging.warn
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -436,7 +437,7 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
             bindingBackup?.applyValidatedBindings(records)
             val inert = bindingBackup?.countUnconnectedBindings(records) ?: 0
             if (inert > 0) {
-                logger.warn("Restored $inert tracking bindings for accounts that are not signed in; they stay inert until the account connects")
+                logger.warn { "Restored $inert tracking bindings for accounts that are not signed in; they stay inert until the account connects" }
             }
         }
 
