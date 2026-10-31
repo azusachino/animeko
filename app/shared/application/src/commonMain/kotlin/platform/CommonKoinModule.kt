@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.flowOf
@@ -146,6 +148,7 @@ import me.him188.ani.app.ui.foundation.tracking.TrackingAccountConnector
 import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
 import me.him188.ani.app.ui.subject.details.tracking.TrackingCoordinator
 import me.him188.ani.tracking.api.DefaultTrackingRegistry
+import me.him188.ani.tracking.api.TrackingAccountState
 import me.him188.ani.tracking.api.TrackingBindingBackup
 import me.him188.ani.tracking.api.TrackingProviderException
 import me.him188.ani.tracking.api.TrackingRegistry
@@ -637,6 +640,18 @@ fun KoinApplication.startCommonKoinModule(
             throw e
         } catch (e: Exception) {
             logger("ani-startup").warn(e) { "Failed to retry pending tracking sync" }
+        }
+    }
+
+    // Re-send queued episodes whenever a tracking source becomes signed in.
+    koin.get<TrackingRegistry>().sources.forEach { source ->
+        coroutineScope.launch(Dispatchers.IO_) {
+            source.connection
+                .filter { it !is TrackingAccountState.Refreshing }
+                .map { it is TrackingAccountState.LoggedIn }
+                .distinctUntilChanged()
+                .filter { it }
+                .collect { koin.get<TrackingEpisodeSynchronizer>().retryPending() }
         }
     }
 

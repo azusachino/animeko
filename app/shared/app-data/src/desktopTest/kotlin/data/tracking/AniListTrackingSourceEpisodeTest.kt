@@ -24,6 +24,7 @@ import me.him188.ani.app.data.persistent.database.dao.SubjectCollectionEntity
 import me.him188.ani.app.data.repository.episode.AnimeScheduleRepository
 import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.data.repository.subject.GetEpisodeTypeFiltersUseCase
+import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
 import me.him188.ani.client.apis.ScheduleAniApi
 import me.him188.ani.client.apis.SubjectsAniApi
 import me.him188.ani.datasources.api.EpisodeSort
@@ -31,6 +32,7 @@ import me.him188.ani.datasources.api.EpisodeType
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
 import me.him188.ani.tracking.api.TrackingAccount
+import me.him188.ani.tracking.api.DefaultTrackingRegistry
 import me.him188.ani.tracking.api.TrackingAccountState
 import me.him188.ani.tracking.api.TrackingCapabilities
 import me.him188.ani.tracking.api.TrackingListEntry
@@ -79,7 +81,7 @@ class AniListTrackingSourceEpisodeTest {
                 subjectCollectionRepository = lazy { error("SubjectCollectionRepository not expected") },
                 getEpisodeTypeFiltersUseCase = GetEpisodeTypeFiltersUseCase { flowOf(EpisodeType.entries) },
             )
-            val provider = NullRefreshProvider()
+            val provider = TitleProvider()
             val source = AniListTrackingSource(
                 bindings = MapBindingStore(mutableMapOf("account-a:42" to "100")),
                 provider = provider,
@@ -88,6 +90,43 @@ class AniListTrackingSourceEpisodeTest {
 
             assertFailsWith<TrackingProviderException.Remote> { source.episodeWatched(42, 1) }
             assertEquals(1, provider.refreshCalls)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun missingTitleStaysPendingUntilRetryFindsTitle() = runBlocking {
+        val database = createTestAniDatabase()
+        try {
+            database.subjectCollection().upsert(listOf(subject(42)))
+            database.episodeCollection().upsert(listOf(episode(42, 1)))
+            val repository = EpisodeCollectionRepository(
+                subjectDao = database.subjectCollection(),
+                episodeCollectionDao = database.episodeCollection(),
+                pendingOpDao = database.episodeCollectionPendingOpDao(),
+                episodeService = EpisodeServiceImpl(UnusedSubjectsApi),
+                animeScheduleRepository = AnimeScheduleRepository(AnimeScheduleService(UnusedScheduleApi)),
+                subjectCollectionRepository = lazy { error("SubjectCollectionRepository not expected") },
+                getEpisodeTypeFiltersUseCase = GetEpisodeTypeFiltersUseCase { flowOf(EpisodeType.entries) },
+            )
+            val provider = TitleProvider()
+            val pending = MapBindingStore(mutableMapOf())
+            val source = AniListTrackingSource(
+                bindings = MapBindingStore(mutableMapOf("account-a:42" to "100")),
+                provider = provider,
+                episodes = lazy { repository },
+            )
+            val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), pending)
+
+            assertFailsWith<TrackingProviderException.Remote> { synchronizer.episodeWatched(42, 1) }
+            assertEquals(mapOf("42:1" to "1"), pending.entries())
+
+            provider.titleAvailable = true
+            synchronizer.retryPending()
+
+            assertEquals(emptyMap(), pending.entries())
+            assertEquals(1, provider.updatedProgress)
         } finally {
             database.close()
         }
@@ -148,10 +187,12 @@ class AniListTrackingSourceEpisodeTest {
         }
     }
 
-    /** A signed-in provider whose title refresh finds nothing. */
-    private class NullRefreshProvider : TrackingProvider {
+    /** A signed-in provider whose title refresh finds nothing until [titleAvailable] is set. */
+    private class TitleProvider : TrackingProvider {
         val state = MutableStateFlow<TrackingAccountState>(TrackingAccountState.LoggedIn(TrackingAccount("account-a", "A")))
         var refreshCalls = 0
+        var titleAvailable = false
+        var updatedProgress: Int? = null
 
         override val info = TrackingProviderInfo(TrackingProviderId("anilist"), "AniList", "https://anilist.co")
         override val capabilities = TrackingCapabilities()
@@ -170,11 +211,18 @@ class AniListTrackingSourceEpisodeTest {
             entry: TrackingListEntry,
             didWatchEpisode: Boolean,
             totalEpisodes: Int?,
-        ): TrackingListEntry = unused()
+        ): TrackingListEntry {
+            updatedProgress = entry.progress
+            return entry
+        }
 
         override suspend fun refresh(mediaId: TrackingMediaId): TrackingMediaWithEntry? {
             refreshCalls++
-            return null
+            if (!titleAvailable) return null
+            return TrackingMediaWithEntry(
+                TrackingMedia(mediaId, "title-${mediaId.value}", "https://anilist.co/anime/${mediaId.value}", null, 12),
+                TrackingListEntry(mediaId, TrackingStatus.CURRENT, progress = 0),
+            )
         }
 
         override suspend fun delete(mediaId: TrackingMediaId) = unused()
