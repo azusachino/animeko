@@ -55,6 +55,8 @@ class AniListTrackingProvider(
     private var cachedToken: String? = null
     /** When the account was last validated by the server; guarded by [accountMutex]. */
     private var accountValidatedAt: TimeMark? = null
+    /** The last failed validation, when it happened and what it threw; guarded by [accountMutex]. */
+    private var accountValidationFailure: Pair<TimeMark, Throwable>? = null
     private var scoreOptionChoices = scoreOptions(POINT_100)
 
     override val info = INFO
@@ -75,6 +77,7 @@ class AniListTrackingProvider(
         get() = scoreOptionChoices
 
     override suspend fun login(credentials: TrackingLoginCredentials): TrackingAccount = accountMutex.withLock {
+        accountValidationFailure = null
         call {
             val viewer = api.viewer(credentials.secret)
             credentialStore.save(credentials)
@@ -88,6 +91,10 @@ class AniListTrackingProvider(
             accountValidatedAt?.let { mark -> mark.elapsedNow() < accountValidity } == true
         }
         if (validated != null) return@withLock validated.account
+        // A failed validation is rethrown for accountValidity instead of asking the server again.
+        accountValidationFailure?.let { (failedAt, failure) ->
+            if (failedAt.elapsedNow() < accountValidity) throw failure
+        }
         val credentials = credentialStore.load() ?: run {
             mutableAccountState.value = TrackingAccountState.LoggedOut
             throw TrackingProviderException.Unauthorized()
@@ -101,6 +108,7 @@ class AniListTrackingProvider(
             throw failure
         } catch (failure: Throwable) {
             mutableAccountState.value = previous?.let(TrackingAccountState::LoggedIn) ?: TrackingAccountState.LoggedOut
+            if (failure !is CancellationException) accountValidationFailure = timeSource.markNow() to failure
             throw failure
         }
     }
@@ -111,6 +119,7 @@ class AniListTrackingProvider(
         credentialStore.clear()
         cachedToken = null
         accountValidatedAt = null
+        accountValidationFailure = null
         mutableAccountState.value = TrackingAccountState.LoggedOut
     }
 

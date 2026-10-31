@@ -575,6 +575,64 @@ class AniListTrackingProviderTest {
         assertEquals(2, calls)
     }
 
+    @Test
+    fun failedValidationIsNotRetriedWithinValidityWindow() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            respondJson("""{"errors":[{"message":"Internal error","status":500}]}""", HttpStatusCode.InternalServerError)
+        }
+        assertFailsWith<TrackingProviderException.Remote> { provider.refreshAccount() }
+        time.now += 4.minutes
+
+        assertFailsWith<TrackingProviderException.Remote> { provider.refreshAccount() }
+
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun failedValidationIsRetriedAfterValidityWindow() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            if (calls == 1) {
+                respondJson("""{"errors":[{"message":"Internal error","status":500}]}""", HttpStatusCode.InternalServerError)
+            } else {
+                respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+            }
+        }
+        assertFailsWith<TrackingProviderException.Remote> { provider.refreshAccount() }
+        time.now += 6.minutes
+
+        val account = provider.refreshAccount()
+
+        assertEquals("haru", account.displayName)
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun loginAfterFailedValidationHitsNetworkAndResetsThrottle() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            if (calls == 1) {
+                respondJson("""{"errors":[{"message":"Internal error","status":500}]}""", HttpStatusCode.InternalServerError)
+            } else {
+                respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+            }
+        }
+        assertFailsWith<TrackingProviderException.Remote> { provider.refreshAccount() }
+        time.now += 1.minutes
+
+        provider.login(TrackingLoginCredentials(secret = "new-token"))
+
+        assertEquals(2, calls)
+        assertTrue(provider.accountState.value is TrackingAccountState.LoggedIn)
+    }
+
     private fun watchEntry(status: TrackingStatus, progress: Int) =
         TrackingListEntry(TrackingMediaId("1"), status, progress, TrackingScore(80), remoteEntryId = "9")
 
