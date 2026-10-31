@@ -36,10 +36,16 @@ import me.him188.ani.tracking.api.TrackingScore
 import me.him188.ani.tracking.api.TrackingScoreOption
 import me.him188.ani.tracking.api.TrackingStatus
 import me.him188.ani.tracking.api.TrackingStatusOption
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 class AniListTrackingProvider(
     client: HttpClient,
     private val credentialStore: TrackingCredentialStore,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val accountValidity: Duration = 5.minutes,
 ) : TrackingProvider {
     private val api = AniListApi(client)
     private val mutableAccountState = MutableStateFlow<TrackingAccountState>(TrackingAccountState.LoggedOut)
@@ -47,6 +53,8 @@ class AniListTrackingProvider(
     /** Serializes login, refresh and logout; never held across search or entry calls. */
     private val accountMutex = Mutex()
     private var cachedToken: String? = null
+    /** When the account was last validated by the server; guarded by [accountMutex]. */
+    private var accountValidatedAt: TimeMark? = null
     private var scoreOptionChoices = scoreOptions(POINT_100)
 
     override val info = INFO
@@ -76,6 +84,10 @@ class AniListTrackingProvider(
     }
 
     override suspend fun refreshAccount(): TrackingAccount = accountMutex.withLock {
+        val validated = (mutableAccountState.value as? TrackingAccountState.LoggedIn)?.takeIf {
+            accountValidatedAt?.let { mark -> mark.elapsedNow() < accountValidity } == true
+        }
+        if (validated != null) return@withLock validated.account
         val credentials = credentialStore.load() ?: run {
             mutableAccountState.value = TrackingAccountState.LoggedOut
             throw TrackingProviderException.Unauthorized()
@@ -98,6 +110,7 @@ class AniListTrackingProvider(
     private suspend fun logoutLocked() {
         credentialStore.clear()
         cachedToken = null
+        accountValidatedAt = null
         mutableAccountState.value = TrackingAccountState.LoggedOut
     }
 
@@ -183,6 +196,7 @@ class AniListTrackingProvider(
 
     private fun AniListViewer.applyToAccountState(): TrackingAccount {
         scoreOptionChoices = scoreOptions(mediaListOptions.scoreFormat)
+        accountValidatedAt = timeSource.markNow()
         return TrackingAccount(id.toString(), name, avatar?.large).also {
             mutableAccountState.value = TrackingAccountState.LoggedIn(it)
         }

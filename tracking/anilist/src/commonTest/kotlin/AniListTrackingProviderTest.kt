@@ -37,6 +37,10 @@ import me.him188.ani.tracking.api.TrackingScore
 import me.him188.ani.tracking.api.TrackingStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -333,8 +337,9 @@ class AniListTrackingProviderTest {
     @Test
     fun refreshWithRevokedTokenLogsOut() = runTest {
         val store = InMemoryCredentialStore()
+        val time = FakeTimeSource()
         var calls = 0
-        val provider = provider(store) {
+        val provider = provider(store, time) {
             calls++
             if (calls == 1) {
                 respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
@@ -343,6 +348,7 @@ class AniListTrackingProviderTest {
             }
         }
         provider.refreshAccount()
+        time.now += 6.minutes
 
         assertFailsWith<TrackingProviderException.Unauthorized> { provider.refreshAccount() }
 
@@ -353,7 +359,8 @@ class AniListTrackingProviderTest {
     @Test
     fun refreshNetworkFailureKeepsPreviousAccount() = runTest {
         var calls = 0
-        val provider = provider {
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
             calls++
             if (calls == 1) {
                 respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
@@ -362,6 +369,7 @@ class AniListTrackingProviderTest {
             }
         }
         provider.refreshAccount()
+        time.now += 6.minutes
 
         assertFailsWith<TrackingProviderException.Remote> { provider.refreshAccount() }
 
@@ -422,8 +430,77 @@ class AniListTrackingProviderTest {
         assertFailsWith<CancellationException> { provider.search("Frieren") }
     }
 
+    @Test
+    fun refreshWithinValidityWindowMakesNoRequest() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+        }
+
+        provider.refreshAccount()
+        time.now += 4.minutes
+        val account = provider.refreshAccount()
+
+        assertEquals("haru", account.displayName)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun refreshAfterValidityWindowHitsNetworkAgain() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+        }
+
+        provider.refreshAccount()
+        time.now += 6.minutes
+        provider.refreshAccount()
+
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun refreshAfterLogoutWithoutCredentialsThrowsUnauthorizedWithoutRequest() = runTest {
+        var calls = 0
+        val provider = provider(InMemoryCredentialStore()) {
+            calls++
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+        }
+        provider.refreshAccount()
+        provider.logout()
+
+        assertFailsWith<TrackingProviderException.Unauthorized> { provider.refreshAccount() }
+
+        assertEquals(1, calls)
+        assertEquals(TrackingAccountState.LoggedOut, provider.accountState.value)
+    }
+
+    @Test
+    fun loginResetsValidityMark() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+        }
+        provider.refreshAccount()
+        time.now += 4.minutes
+        provider.login(TrackingLoginCredentials(secret = "new-token"))
+        time.now += 4.minutes
+
+        provider.refreshAccount()
+
+        // 8 minutes after the first refresh, but only 4 after login, so no extra request.
+        assertEquals(2, calls)
+    }
+
     private fun provider(
         store: TrackingCredentialStore = InMemoryCredentialStore(),
+        time: TimeSource = TimeSource.Monotonic,
         handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
     ): AniListTrackingProvider {
         val client = HttpClient(MockEngine(handler)) {
@@ -431,7 +508,7 @@ class AniListTrackingProviderTest {
             install(createAniListRateLimitPlugin())
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-        return AniListTrackingProvider(client, store)
+        return AniListTrackingProvider(client, store, timeSource = time)
     }
 
     private fun MockRequestHandleScope.respondJson(
@@ -442,6 +519,17 @@ class AniListTrackingProviderTest {
         status = status,
         headers = headersOf(HttpHeaders.ContentType, "application/json"),
     )
+}
+
+private class FakeTimeSource : TimeSource {
+    var now: Duration = Duration.ZERO
+
+    override fun markNow(): TimeMark {
+        val start = now
+        return object : TimeMark {
+            override fun elapsedNow(): Duration = now - start
+        }
+    }
 }
 
 private class InMemoryCredentialStore(

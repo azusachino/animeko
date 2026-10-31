@@ -26,6 +26,7 @@ kotlin {
     }
     sourceSets.commonMain.dependencies {
         implementation(projects.tracking.api)
+        implementation(projects.tracking.anilist)
         api(projects.app.shared.appPlatform)
         api(projects.app.shared.uiFoundation)
         api(projects.app.shared)
@@ -41,7 +42,6 @@ kotlin {
     }
     sourceSets.iosMain.dependencies {
         implementation(libs.mediamp.ffmpeg)
-        implementation(projects.tracking.anilist)
     }
 }
 

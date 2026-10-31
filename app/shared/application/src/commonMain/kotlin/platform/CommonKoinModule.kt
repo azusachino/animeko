@@ -137,6 +137,7 @@ import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateFactory
 import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
 import me.him188.ani.app.data.tracking.BangumiTrackingSource
 import me.him188.ani.app.data.tracking.TrackingBindingStore
+import me.him188.ani.app.tracking.anilist.AniListTrackingProvider
 import me.him188.ani.app.ui.foundation.icons.BangumiTrackingIcon
 import me.him188.ani.app.ui.foundation.icons.TrackingIconRenderer
 import me.him188.ani.app.ui.foundation.icons.TrackingIconRegistry
@@ -146,6 +147,7 @@ import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
 import me.him188.ani.app.ui.subject.details.tracking.TrackingCoordinator
 import me.him188.ani.tracking.api.DefaultTrackingRegistry
 import me.him188.ani.tracking.api.TrackingBindingBackup
+import me.him188.ani.tracking.api.TrackingProviderException
 import me.him188.ani.tracking.api.TrackingRegistry
 import me.him188.ani.tracking.api.TrackingSource
 import me.him188.ani.utils.coroutines.IO_
@@ -635,6 +637,21 @@ fun KoinApplication.startCommonKoinModule(
             throw e
         } catch (e: Exception) {
             logger("ani-startup").warn(e) { "Failed to retry pending tracking sync" }
+        }
+    }
+
+    coroutineScope.launch(Dispatchers.IO_) {
+        // Restore the stored AniList session in the background so the account is known before Settings opens.
+        val provider = koin.getOrNull<AniListTrackingProvider>() ?: return@launch
+        val startupLogger = logger("ani-startup")
+        try {
+            provider.refreshAccount()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: TrackingProviderException.Unauthorized) {
+            startupLogger.warn { "Stored AniList session is no longer valid; logged out" }
+        } catch (e: Exception) {
+            startupLogger.warn(e) { "Failed to restore AniList session" }
         }
     }
 
