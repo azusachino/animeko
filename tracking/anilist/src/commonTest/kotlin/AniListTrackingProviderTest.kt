@@ -19,6 +19,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -37,6 +39,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class AniListTrackingProviderTest {
@@ -109,7 +112,7 @@ class AniListTrackingProviderTest {
         var mutationBody = ""
         val provider = provider { request ->
             calls++
-            if (calls <= 2) {
+            if (calls == 1) {
                 respondJson("""{"data":{"Media":{"id":1,"title":{"userPreferred":"Frieren"},"mediaListEntry":{"id":9,"mediaId":1,"status":"CURRENT","score":85,"progress":12,"startedAt":{"year":2024,"month":1,"day":2},"completedAt":{"year":2024,"month":3,"day":4}}}}}""")
             } else {
                 mutationBody = request.body.toByteArray().decodeToString()
@@ -211,6 +214,85 @@ class AniListTrackingProviderTest {
         val variables = Json.parseToJsonElement(mutationBody).jsonObject.getValue("variables").jsonObject
         assertEquals("\"COMPLETED\"", variables.getValue("status").toString())
         assertEquals("28", variables.getValue("progress").toString())
+    }
+
+    @Test
+    fun watchedEpisodeIssuesOneReadAndOneSave() = runTest {
+        var calls = 0
+        var mutationBody = ""
+        val provider = provider { request ->
+            calls++
+            if (calls == 1) {
+                respondJson("""{"data":{"Media":{"id":1,"title":{"userPreferred":"Frieren"},"episodes":28,"mediaListEntry":{"id":9,"mediaId":1,"status":"CURRENT","score":80,"progress":27}}}}""")
+            } else {
+                mutationBody = request.body.toByteArray().decodeToString()
+                respondJson("""{"data":{"SaveMediaListEntry":{"id":9,"mediaId":1,"status":"COMPLETED","score":80,"progress":28}}}""")
+            }
+        }
+
+        val current = provider.refresh(TrackingMediaId("1"))!!
+        val saved = provider.update(
+            current.listEntry!!.copy(progress = 28),
+            didWatchEpisode = true,
+            totalEpisodes = current.media.totalEpisodes,
+        )
+
+        assertEquals(2, calls)
+        assertEquals(TrackingStatus.COMPLETED, saved.status)
+        val variables = Json.parseToJsonElement(mutationBody).jsonObject.getValue("variables").jsonObject
+        assertEquals("9", variables.getValue("id").toString())
+    }
+
+    @Test
+    fun logoutDuringInFlightRefreshLeavesLoggedOutWithoutCredential() = runTest {
+        val store = InMemoryCredentialStore()
+        val requestStarted = CompletableDeferred<Unit>()
+        val responseReleased = CompletableDeferred<Unit>()
+        val provider = provider(store) {
+            requestStarted.complete(Unit)
+            responseReleased.await()
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+        }
+
+        val refresh = async { provider.refreshAccount() }
+        requestStarted.await()
+        val logout = async { provider.logout() }
+        responseReleased.complete(Unit)
+        refresh.await()
+        logout.await()
+
+        assertEquals(TrackingAccountState.LoggedOut, provider.accountState.value)
+        assertNull(store.load())
+    }
+
+    @Test
+    fun logoutClearsCachedTokenSoLaterCallsNeedLogin() = runTest {
+        var calls = 0
+        val provider = provider {
+            calls++
+            respondJson("""{"data":{"Page":{"media":[]}}}""")
+        }
+
+        provider.search("Frieren")
+        provider.logout()
+
+        assertFailsWith<TrackingProviderException.Unauthorized> { provider.search("Frieren") }
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun scoreOptionsAreBuiltOncePerScoreFormat() = runTest {
+        val provider = provider {
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_5"}}}}""")
+        }
+        val initial = provider.scoreOptions
+        assertSame(initial, provider.scoreOptions)
+
+        provider.login(TrackingLoginCredentials(secret = "new-token"))
+
+        val afterLogin = provider.scoreOptions
+        assertEquals(6, afterLogin.size)
+        assertSame(afterLogin, provider.scoreOptions)
     }
 
     @Test

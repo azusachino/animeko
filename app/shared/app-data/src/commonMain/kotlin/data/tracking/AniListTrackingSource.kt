@@ -206,7 +206,11 @@ class AniListTrackingSource(
             val current = provider.refresh(mediaId) ?: return
             val entry = current.listEntry ?: return
             if (progress > entry.progress) {
-                val saved = provider.update(entry.copy(progress = progress), didWatchEpisode = true)
+                val saved = provider.update(
+                    entry.copy(progress = progress),
+                    didWatchEpisode = true,
+                    totalEpisodes = current.media.totalEpisodes,
+                )
                 snapshotState(subjectId).value = TrackingSnapshot(current.media, saved)
             }
         }

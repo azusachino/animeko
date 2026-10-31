@@ -98,7 +98,7 @@ private class InMemoryTrackingProvider : TrackingProvider {
 
     override suspend fun bind(entry: TrackingListEntry): TrackingListEntry = entry.also { this.entry = it }
 
-    override suspend fun update(entry: TrackingListEntry, didWatchEpisode: Boolean): TrackingListEntry =
+    override suspend fun update(entry: TrackingListEntry, didWatchEpisode: Boolean, totalEpisodes: Int?): TrackingListEntry =
         entry.also { this.entry = it }
 
     override suspend fun updateDate(entry: TrackingListEntry, field: TrackingDateField, date: TrackingDate?): TrackingListEntry =

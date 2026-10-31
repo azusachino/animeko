@@ -51,8 +51,15 @@ interface TrackingProvider {
     /** Creates or replaces the represented fields after reconciliation has been explicitly chosen. */
     suspend fun bind(entry: TrackingListEntry): TrackingListEntry
 
-    /** Updates an existing binding; providers may apply their Mihon-style watched-episode transitions. */
-    suspend fun update(entry: TrackingListEntry, didWatchEpisode: Boolean = false): TrackingListEntry
+    /**
+     * Updates an existing binding; providers may apply their Mihon-style watched-episode transitions.
+     * [totalEpisodes] is only used for those transitions; null lets the provider look it up.
+     */
+    suspend fun update(
+        entry: TrackingListEntry,
+        didWatchEpisode: Boolean = false,
+        totalEpisodes: Int? = null,
+    ): TrackingListEntry
 
     /** Updates one tracking date without changing the other entry fields. Null clears that date. */
     suspend fun updateDate(entry: TrackingListEntry, field: TrackingDateField, date: TrackingDate?): TrackingListEntry =
@@ -168,6 +175,8 @@ data class TrackingListEntry(
     val startedAt: TrackingDate? = null,
     val completedAt: TrackingDate? = null,
     val isPrivate: Boolean = false,
+    /** Opaque ID of the remote list entry, when the provider already returned it; null means look it up. */
+    val remoteEntryId: String? = null,
 ) {
     init {
         require(progress >= 0) { "Tracking progress must not be negative" }
