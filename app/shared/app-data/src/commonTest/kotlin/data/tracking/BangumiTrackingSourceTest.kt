@@ -62,6 +62,39 @@ class BangumiTrackingSourceTest {
     }
 
     @Test
+    fun lastMainStoryEpisodeWithGapsBecomesDone() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FakeSubjectCollectionRepository(
+            collection(UnifiedCollectionType.DOING, watchedNumbers = (1..6).toSet() + TOTAL),
+        )
+
+        bangumiSource(repo).episodeWatched(subjectId, episodeId(TOTAL))
+
+        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DONE), repo.writes)
+    }
+
+    @Test
+    fun wishGoesStraightToDoneWhenLastMainStoryEpisodeIsWatched() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FakeSubjectCollectionRepository(
+            collection(UnifiedCollectionType.WISH, watchedNumbers = setOf(TOTAL)),
+        )
+
+        bangumiSource(repo).episodeWatched(subjectId, episodeId(TOTAL))
+
+        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DONE), repo.writes)
+    }
+
+    @Test
+    fun wishBecomesDoingOnMiddleEpisodeWithGapsAfterIt() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FakeSubjectCollectionRepository(
+            collection(UnifiedCollectionType.WISH, watchedNumbers = setOf(6)),
+        )
+
+        bangumiSource(repo).episodeWatched(subjectId, episodeId(6))
+
+        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DOING), repo.writes)
+    }
+
+    @Test
     fun doingStaysDoingMidSeries() = runTest(UnconfinedTestDispatcher()) {
         val repo = FakeSubjectCollectionRepository(collection(UnifiedCollectionType.DOING, watched = 2))
 
@@ -124,10 +157,10 @@ class BangumiTrackingSourceTest {
         val source = bangumiSource(repo)
 
         source.episodeWatched(subjectId, episodeId(TOTAL))
-        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DOING, UnifiedCollectionType.DONE), repo.writes)
+        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DONE), repo.writes)
 
         source.episodeWatched(subjectId, episodeId(TOTAL))
-        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DOING, UnifiedCollectionType.DONE), repo.writes)
+        assertEquals(listOf<UnifiedCollectionType?>(UnifiedCollectionType.DONE), repo.writes)
     }
 
     @Test
@@ -161,11 +194,16 @@ class BangumiTrackingSourceTest {
         collectionType = if (watched) UnifiedCollectionType.DONE else UnifiedCollectionType.NOT_COLLECTED,
     )
 
-    private fun episodes(watched: Int): List<EpisodeCollectionInfo> =
-        (1..TOTAL).map { number -> episode(episodeId(number), number, watched = number <= watched) }
+    private fun episodes(watched: Int): List<EpisodeCollectionInfo> = episodes((1..watched).toSet())
+
+    private fun episodes(watchedNumbers: Set<Int>): List<EpisodeCollectionInfo> =
+        (1..TOTAL).map { number -> episode(episodeId(number), number, watched = number in watchedNumbers) }
 
     private fun collection(type: UnifiedCollectionType, watched: Int): SubjectCollectionInfo =
-        createTestSubjectCollection(id = subjectId, episodes = episodes(watched), collectionType = type)
+        collection(type, watchedNumbers = (1..watched).toSet())
+
+    private fun collection(type: UnifiedCollectionType, watchedNumbers: Set<Int>): SubjectCollectionInfo =
+        createTestSubjectCollection(id = subjectId, episodes = episodes(watchedNumbers), collectionType = type)
 
     private fun TestScope.bangumiSource(
         repo: FakeSubjectCollectionRepository,

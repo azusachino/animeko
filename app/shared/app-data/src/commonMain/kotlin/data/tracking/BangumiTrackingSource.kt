@@ -22,6 +22,7 @@ import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
 import me.him188.ani.app.data.repository.user.UserRepository
 import me.him188.ani.app.domain.session.SessionState
 import me.him188.ani.app.domain.session.SessionStateProvider
+import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.EpisodeType
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
 import me.him188.ani.tracking.api.TrackingAccount
@@ -174,8 +175,11 @@ class BangumiTrackingSource(
     }
 
     /**
-     * Mihon-style subject transitions: WISH becomes DOING on the first watched main-story episode, and DOING becomes
-     * DONE once every main-story episode is watched. Other collection types are left alone.
+     * Watching a main-story episode moves a WISH or DOING subject to DONE when it is the subject's last main-story
+     * episode, and moves a WISH subject to DOING otherwise. Unwatched earlier episodes are not marked. Other
+     * collection types are left alone.
+     *
+     * "Last" uses the same ordering as the progress logic in `SubjectProgressInfo`: normal episodes sorted by sort.
      *
      * Runs after the episode write is persisted, so the collection read reflects this watch.
      * Failures are rethrown, letting [me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer] record them as pending.
@@ -191,23 +195,23 @@ class BangumiTrackingSource(
             logger.info { "[tracking-sync] bangumi skip: episode $episodeId is not a main-story episode of subject $subjectId" }
             return
         }
-        when (collection.collectionType) {
-            UnifiedCollectionType.WISH -> subjectCollectionRepository.value.setSubjectCollectionTypeOrDelete(
-                subjectId,
-                UnifiedCollectionType.DOING,
-            )
-
-            UnifiedCollectionType.DOING -> Unit
+        if (collection.collectionType != UnifiedCollectionType.WISH && collection.collectionType != UnifiedCollectionType.DOING) {
+            logger.info { "[tracking-sync] bangumi skip: collection type is ${collection.collectionType}, not changed" }
+            return
+        }
+        val lastMainEpisode = mainEpisodes
+            .filter { it.episodeInfo.sort is EpisodeSort.Normal }
+            .sortedBy { it.episodeInfo.sort }
+            .lastOrNull()
+        val target = when {
+            lastMainEpisode?.episodeId == episodeId -> UnifiedCollectionType.DONE
+            collection.collectionType == UnifiedCollectionType.WISH -> UnifiedCollectionType.DOING
             else -> {
-                logger.info { "[tracking-sync] bangumi skip: collection type is ${collection.collectionType}, not changed" }
+                logger.info { "[tracking-sync] bangumi skip: episode $episodeId is not the last main-story episode, subject $subjectId stays DOING" }
                 return
             }
         }
-        if (mainEpisodes.all { it.collectionType == UnifiedCollectionType.DONE }) {
-            subjectCollectionRepository.value.setSubjectCollectionTypeOrDelete(subjectId, UnifiedCollectionType.DONE)
-        } else {
-            logger.info { "[tracking-sync] bangumi skip: subject $subjectId has unwatched main-story episodes" }
-        }
+        subjectCollectionRepository.value.setSubjectCollectionTypeOrDelete(subjectId, target)
     }
 
     private suspend fun requireConnected() {
