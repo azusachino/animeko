@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.him188.ani.app.data.tracking.TrackingBindingStore
 import me.him188.ani.tracking.api.TrackingRegistry
+import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.thisLogger
 import me.him188.ani.utils.logging.warn
 import kotlin.time.Duration
@@ -78,12 +79,16 @@ class TrackingEpisodeSynchronizer(
     /** Records the episode as pending on failure and clears its pending entry on full success. */
     private suspend fun dispatch(subjectId: Int, episodeId: Int) {
         var failure: Exception? = null
+        logger.info { "[tracking-sync] dispatch subjectId=$subjectId episodeId=$episodeId sources=${registry.sources.size}" }
         registry.sources.forEach { source ->
+            val name = "${source.info.id.value} (${source.info.displayName})"
             try {
                 source.episodeWatched(subjectId, episodeId)
+                logger.info { "[tracking-sync] source $name succeeded" }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                logger.info { "[tracking-sync] source $name failed: ${error::class.simpleName}" }
                 failure = error
             }
         }

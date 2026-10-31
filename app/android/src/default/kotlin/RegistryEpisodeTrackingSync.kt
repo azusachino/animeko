@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import me.him188.ani.app.domain.episode.EpisodeTrackingSync
 import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
+import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 
@@ -25,6 +26,7 @@ internal class RegistryEpisodeTrackingSync(
     private val logger = logger<RegistryEpisodeTrackingSync>()
 
     override fun onEpisodeWatched(subjectId: Int, episodeId: Int) {
+        logger.info { "[tracking-sync] onEpisodeWatched subjectId=$subjectId episodeId=$episodeId" }
         scope.launch(Dispatchers.IO) {
             try {
                 synchronizer.episodeWatched(subjectId, episodeId)

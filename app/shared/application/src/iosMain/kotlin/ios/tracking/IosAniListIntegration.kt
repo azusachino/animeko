@@ -21,6 +21,7 @@ import me.him188.ani.app.ui.foundation.tracking.toViewState
 import me.him188.ani.tracking.api.PendingLoginGate
 import me.him188.ani.tracking.api.TrackingLoginCredentials
 import me.him188.ani.tracking.api.TrackingProviderException
+import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 
@@ -59,6 +60,9 @@ class IosRegistryEpisodeTrackingSync(
     private val scope: CoroutineScope,
 ) : EpisodeTrackingSync {
     override fun onEpisodeWatched(subjectId: Int, episodeId: Int) {
+        logger<IosRegistryEpisodeTrackingSync>().info {
+            "[tracking-sync] onEpisodeWatched subjectId=$subjectId episodeId=$episodeId"
+        }
         scope.launch(Dispatchers.Default) {
             try {
                 synchronizer.episodeWatched(subjectId, episodeId)

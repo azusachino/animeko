@@ -35,6 +35,7 @@ import me.him188.ani.tracking.api.TrackingSnapshot
 import me.him188.ani.tracking.api.TrackingSource
 import me.him188.ani.tracking.api.TrackingSourceCapabilities
 import me.him188.ani.tracking.api.TrackingStatus
+import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.thisLogger
 import me.him188.ani.utils.logging.warn
 import kotlin.time.Duration
@@ -210,23 +211,54 @@ class AniListTrackingSource(
     }
 
     override suspend fun episodeWatched(subjectId: Int, episodeId: Int) {
-        if (synchronized(snapshotsLock) { subjectId !in boundSubjects }) return
+        if (synchronized(snapshotsLock) { subjectId !in boundSubjects }) {
+            logger.info { "[tracking-sync] skip: subject $subjectId is not bound" }
+            return
+        }
         episodeSyncMutex.withLock {
             val account = try {
                 currentAccount()
             } catch (_: TrackingProviderException.Unauthorized) {
+                logger.info { "[tracking-sync] skip: account unavailable (unauthorized)" }
                 return
             }
-            val mediaId = bindings.get(bindingKey(account.remoteId, subjectId))
-                ?.let(::TrackingMediaId) ?: return
+            val mediaId = bindings.get(bindingKey(account.remoteId, subjectId))?.let(::TrackingMediaId)
+            if (mediaId == null) {
+                logger.info { "[tracking-sync] skip: no binding for subject $subjectId under the account" }
+                return
+            }
             val episode = episodes.value.episodeCollectionInfoFlow(subjectId, episodeId).first().episodeInfo
-            if (episode.type != null && episode.type != EpisodeType.MainStory) return
-            val number = episode.ep?.number ?: return
+            if (episode.type != null && episode.type != EpisodeType.MainStory) {
+                logger.info { "[tracking-sync] skip: episode type is ${episode.type}, not MainStory" }
+                return
+            }
+            val number = episode.ep?.number
+            if (number == null) {
+                logger.info { "[tracking-sync] skip: episode has no ep number (ep=${episode.ep}, sort=${episode.sort})" }
+                val sortNumber = episode.sort.number
+                if (episode.type == EpisodeType.MainStory && sortNumber != null && sortNumber > 0f &&
+                    sortNumber.toInt().toFloat() == sortNumber
+                ) {
+                    logger.info { "[tracking-sync] sort=${episode.sort} is a positive whole number; would use it if ep were used (not applied)" }
+                }
+                return
+            }
             val progress = number.toInt()
-            if (progress <= 0 || progress.toFloat() != number) return
+            if (progress <= 0 || progress.toFloat() != number) {
+                logger.info { "[tracking-sync] skip: ep is not a positive integer (ep=${episode.ep}, sort=${episode.sort})" }
+                return
+            }
 
-            val current = provider.refresh(mediaId) ?: return
-            val entry = current.listEntry ?: return
+            val current = provider.refresh(mediaId)
+            if (current == null) {
+                logger.info { "[tracking-sync] skip: remote title refresh returned null for subject $subjectId" }
+                return
+            }
+            val entry = current.listEntry
+            if (entry == null) {
+                logger.info { "[tracking-sync] skip: no remote list entry for subject $subjectId" }
+                return
+            }
             if (progress > entry.progress) {
                 val saved = provider.update(
                     entry.copy(progress = progress),
@@ -234,6 +266,9 @@ class AniListTrackingSource(
                     totalEpisodes = current.media.totalEpisodes,
                 )
                 publish(subjectId, account.remoteId, TrackingSnapshot(current.media, saved))
+                logger.info { "[tracking-sync] updated subject $subjectId to progress $progress" }
+            } else {
+                logger.info { "[tracking-sync] skip: progress $progress not greater than remote ${entry.progress} for subject $subjectId" }
             }
         }
     }

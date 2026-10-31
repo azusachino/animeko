@@ -15,6 +15,8 @@ import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.domain.foundation.LoadError
 import me.him188.ani.app.domain.usecase.UseCase
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
+import me.him188.ani.utils.logging.info
+import me.him188.ani.utils.logging.logger
 import org.koin.core.Koin
 
 data class SetEpisodeCollectionTypeRequest(
@@ -46,12 +48,15 @@ class SetEpisodeCollectionTypeUseCaseImpl(
 ) : SetEpisodeCollectionTypeUseCase {
     private val episodeCollectionRepository: EpisodeCollectionRepository by koin.inject()
     private val trackingSync: EpisodeTrackingSync? by lazy { koin.getOrNull() }
+    private val logger = logger<SetEpisodeCollectionTypeUseCaseImpl>()
 
     override suspend fun invoke(subjectId: Int, episodeId: Int, collectionType: UnifiedCollectionType) {
         withContext(Dispatchers.Default) {
+            logger.info { "[tracking-sync] set collection subjectId=$subjectId episodeId=$episodeId type=$collectionType" }
             // Persist locally and enqueue server sync before notifying AniList.
             episodeCollectionRepository.setEpisodeCollectionType(subjectId, episodeId, collectionType)
             if (collectionType == UnifiedCollectionType.DONE) {
+                logger.info { "[tracking-sync] notify onEpisodeWatched: trackingSync present=${trackingSync != null}" }
                 trackingSync?.onEpisodeWatched(subjectId, episodeId)
             }
         }
