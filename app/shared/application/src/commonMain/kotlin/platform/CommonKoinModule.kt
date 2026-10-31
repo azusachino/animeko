@@ -554,7 +554,13 @@ private fun KoinApplication.otherModules(
     single<TrackingRegistry> { DefaultTrackingRegistry(listOf(get<BangumiTrackingSource>()) + getAll<TrackingSource>()) }
     single<TrackingBindingBackup> { get<TrackingRegistry>() }
     single { TrackingCoordinator(get()) }
-    single { TrackingEpisodeSynchronizer(get(), getOrNull<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE))) }
+    single {
+        TrackingEpisodeSynchronizer(
+            get(),
+            getOrNull<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE)),
+            scope = coroutineScope,
+        )
+    }
 }
 
 /** Qualifier of the platform-provided [TrackingBindingStore] that holds episodes awaiting tracking sync. */

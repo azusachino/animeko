@@ -11,6 +11,8 @@ package me.him188.ani.app.domain.tracking
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import me.him188.ani.app.data.tracking.TrackingBindingStore
 import me.him188.ani.tracking.api.DefaultTrackingRegistry
@@ -27,6 +29,8 @@ import me.him188.ani.tracking.api.TrackingStatusOption
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 class TrackingEpisodeSynchronizerTest {
     @Test
@@ -46,12 +50,28 @@ class TrackingEpisodeSynchronizerTest {
         val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), store)
 
         assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 7) }
-        assertEquals(mapOf("42" to "7"), store.entries())
+        assertEquals(mapOf("42:7" to "1"), store.entries())
 
         source.fail = false
         synchronizer.episodeWatched(42, 8)
         assertEquals(emptyMap(), store.entries())
         assertEquals(listOf(7, 7, 8), source.episodes)
+    }
+
+    @Test
+    fun failuresForLaterAndEarlierEpisodesAreBothKeptAndDelivered() = runTest {
+        val source = FakeSource("only", fail = true)
+        val store = MemoryBindingStore()
+        val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), store)
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 5) }
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 4) }
+        assertEquals(mapOf("42:5" to "1", "42:4" to "1"), store.entries())
+
+        source.fail = false
+        source.episodes.clear()
+        synchronizer.retryPending()
+        assertEquals(emptyMap(), store.entries())
+        assertEquals(listOf(5, 4), source.episodes)
     }
 
     @Test
@@ -62,7 +82,7 @@ class TrackingEpisodeSynchronizerTest {
         assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 7) }
 
         synchronizer.retryPending()
-        assertEquals(mapOf("42" to "7"), store.entries())
+        assertEquals(mapOf("42:7" to "1"), store.entries())
 
         source.fail = false
         synchronizer.retryPending()
@@ -74,13 +94,85 @@ class TrackingEpisodeSynchronizerTest {
     fun retryPendingDropsMalformedEntriesAndDispatchesValidOnes() = runTest {
         val source = FakeSource("only")
         val store = MemoryBindingStore(
-            mapOf("not-a-subject" to "7", "42" to "oops", "43" to "9"),
+            mapOf("not-a-subject:7" to "1", "42:oops" to "1", "42:7:extra" to "1", "43:9" to "1"),
         )
         val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), store)
 
         synchronizer.retryPending()
         assertEquals(emptyMap(), store.entries())
         assertEquals(listOf(9), source.episodes)
+    }
+
+    @Test
+    fun backoffRetryFiresAfterFirstDelayAndDrains() = runTest {
+        val source = FakeSource("only", fail = true)
+        val store = MemoryBindingStore()
+        val synchronizer = TrackingEpisodeSynchronizer(
+            DefaultTrackingRegistry(listOf(source)), store, scope = backgroundScope,
+        )
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 7) }
+
+        source.fail = false
+        advanceTimeBy(4.minutes)
+        assertEquals(1, source.calls)
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(2, source.calls)
+        assertEquals(emptyMap(), store.entries())
+    }
+
+    @Test
+    fun backoffStopsAfterThreeRetriesWhileStillFailing() = runTest {
+        val source = FakeSource("only", fail = true)
+        val store = MemoryBindingStore()
+        val synchronizer = TrackingEpisodeSynchronizer(
+            DefaultTrackingRegistry(listOf(source)), store, scope = backgroundScope,
+        )
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 7) }
+
+        advanceTimeBy(5.minutes)
+        runCurrent()
+        assertEquals(2, source.calls)
+        advanceTimeBy(10.minutes)
+        runCurrent()
+        assertEquals(3, source.calls)
+        advanceTimeBy(20.minutes)
+        runCurrent()
+        assertEquals(4, source.calls)
+
+        advanceTimeBy(1.hours)
+        runCurrent()
+        assertEquals(4, source.calls)
+        assertEquals(mapOf("42:7" to "1"), store.entries())
+
+        // A failure after the cycle gave up starts a fresh cycle: both entries are retried after 5 minutes.
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 8) }
+        advanceTimeBy(5.minutes)
+        runCurrent()
+        assertEquals(8, source.calls)
+    }
+
+    @Test
+    fun successfulDrainEndsBackoffCycle() = runTest {
+        val source = FakeSource("only", fail = true)
+        val store = MemoryBindingStore()
+        val synchronizer = TrackingEpisodeSynchronizer(
+            DefaultTrackingRegistry(listOf(source)), store, scope = backgroundScope,
+        )
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 7) }
+
+        source.fail = false
+        advanceTimeBy(5.minutes)
+        runCurrent()
+        assertEquals(emptyMap(), store.entries())
+        assertEquals(2, source.calls)
+
+        // The ended cycle no longer blocks scheduling: the next failure gets its own retry.
+        source.fail = true
+        assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 8) }
+        advanceTimeBy(5.minutes)
+        runCurrent()
+        assertEquals(4, source.calls)
     }
 
     private class MemoryBindingStore(initial: Map<String, String> = emptyMap()) : TrackingBindingStore {
