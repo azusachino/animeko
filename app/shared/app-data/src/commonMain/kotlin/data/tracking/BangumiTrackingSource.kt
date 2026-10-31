@@ -42,6 +42,8 @@ import me.him188.ani.tracking.api.TrackingSourceCapabilities
 import me.him188.ani.tracking.api.TrackingSourcePresentation
 import me.him188.ani.tracking.api.TrackingStatus
 import me.him188.ani.tracking.api.TrackingStatusOption
+import me.him188.ani.utils.logging.info
+import me.him188.ani.utils.logging.thisLogger
 
 class BangumiTrackingSource(
     private val sessionStateProvider: SessionStateProvider,
@@ -51,6 +53,8 @@ class BangumiTrackingSource(
     private val episodeCollectionRepository: Lazy<EpisodeCollectionRepository>,
 ) : TrackingSource {
     override val info = INFO
+
+    private val logger = thisLogger()
 
     override val connection: Flow<TrackingAccountState> = combine(
         sessionStateProvider.stateFlow,
@@ -169,6 +173,43 @@ class BangumiTrackingSource(
         // Bangumi media IDs are the subject IDs, so there is no local match to remove.
     }
 
+    /**
+     * Mihon-style subject transitions: WISH becomes DOING on the first watched main-story episode, and DOING becomes
+     * DONE once every main-story episode is watched. Other collection types are left alone.
+     *
+     * Runs after the episode write is persisted, so the collection read reflects this watch.
+     * Failures are rethrown, letting [me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer] record them as pending.
+     */
+    override suspend fun episodeWatched(subjectId: Int, episodeId: Int) {
+        if (!isBangumiConnected()) {
+            logger.info { "[tracking-sync] bangumi skip: not connected" }
+            return
+        }
+        val collection = readCollectionInfo(subjectId)
+        val mainEpisodes = collection.mainStoryEpisodes()
+        if (mainEpisodes.none { it.episodeId == episodeId }) {
+            logger.info { "[tracking-sync] bangumi skip: episode $episodeId is not a main-story episode of subject $subjectId" }
+            return
+        }
+        when (collection.collectionType) {
+            UnifiedCollectionType.WISH -> subjectCollectionRepository.value.setSubjectCollectionTypeOrDelete(
+                subjectId,
+                UnifiedCollectionType.DOING,
+            )
+
+            UnifiedCollectionType.DOING -> Unit
+            else -> {
+                logger.info { "[tracking-sync] bangumi skip: collection type is ${collection.collectionType}, not changed" }
+                return
+            }
+        }
+        if (mainEpisodes.all { it.collectionType == UnifiedCollectionType.DONE }) {
+            subjectCollectionRepository.value.setSubjectCollectionTypeOrDelete(subjectId, UnifiedCollectionType.DONE)
+        } else {
+            logger.info { "[tracking-sync] bangumi skip: subject $subjectId has unwatched main-story episodes" }
+        }
+    }
+
     private suspend fun requireConnected() {
         if (sessionStateProvider.stateFlow.first() !is SessionState.Valid) {
             throw TrackingProviderException.Unauthorized()
@@ -196,7 +237,7 @@ class BangumiTrackingSource(
     private fun SubjectCollectionInfo.toTrackingSnapshot(bangumiConnected: Boolean): TrackingSnapshot {
         // This repository flow honors the user's episode-type filter; progress therefore reflects
         // the main-story episodes exposed by the current collection flow.
-        val mainEpisodes = episodes.filter { it.episodeInfo.type == null || it.episodeInfo.type == EpisodeType.MainStory }
+        val mainEpisodes = mainStoryEpisodes()
         val media = TrackingMedia(
             id = TrackingMediaId(subjectId.toString()),
             title = subjectInfo.displayName,
@@ -218,6 +259,9 @@ class BangumiTrackingSource(
             episodes = mainEpisodes.map { it.toTrackingEpisode() },
         )
     }
+
+    private fun SubjectCollectionInfo.mainStoryEpisodes(): List<EpisodeCollectionInfo> =
+        episodes.filter { it.episodeInfo.type == null || it.episodeInfo.type == EpisodeType.MainStory }
 
     private fun EpisodeCollectionInfo.toTrackingEpisode() = TrackingEpisode(
         id = episodeId,
