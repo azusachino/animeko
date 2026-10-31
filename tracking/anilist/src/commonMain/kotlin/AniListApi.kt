@@ -41,15 +41,15 @@ internal class AniListApi(private val client: HttpClient) {
         token,
     ).media
 
-    suspend fun save(mediaId: Int, entryId: Int?, status: String, score: Int, progress: Int, token: String): AniListEntry =
+    suspend fun save(mediaId: Int, entryId: Int?, update: AniListEntryUpdate, token: String): AniListEntry =
         execute<SaveEntryData>(
             SAVE,
             buildJsonObject {
                 entryId?.let { put("id", it) }
                 put("mediaId", mediaId)
-                put("status", status)
-                put("score", score)
-                put("progress", progress)
+                put("status", update.status.name)
+                put("score", update.score)
+                put("progress", update.progress)
             },
             token,
         ).entry

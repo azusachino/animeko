@@ -93,3 +93,26 @@ internal data class AniListEntry(
 
 @Serializable
 internal data class AniListDate(val year: Int? = null, val month: Int? = null, val day: Int? = null)
+
+/** AniList `MediaListStatus` GraphQL enum. The wire value of each constant is its name. */
+internal enum class AniListMediaListStatus {
+    CURRENT,
+    PLANNING,
+    COMPLETED,
+    DROPPED,
+    PAUSED,
+    REPEATING,
+    ;
+
+    companion object {
+        /** Returns null for a status this module does not know, so the caller decides how to fail. */
+        fun fromWire(value: String): AniListMediaListStatus? = entries.firstOrNull { it.name == value }
+    }
+}
+
+/** The list-entry fields that a save writes together. */
+internal data class AniListEntryUpdate(
+    val status: AniListMediaListStatus,
+    val score: Int,
+    val progress: Int,
+)

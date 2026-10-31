@@ -198,9 +198,11 @@ class AniListTrackingProvider(
         api.save(
             mediaId = entry.mediaId.asAniListId(),
             entryId = entryId,
-            status = entry.status.toAniListStatus(),
-            score = entry.score.value,
-            progress = entry.progress,
+            update = AniListEntryUpdate(
+                status = entry.status.toAniListStatus(),
+                score = entry.score.value,
+                progress = entry.progress,
+            ),
             token = token(),
         ).toTrackingEntry()
     }
@@ -308,21 +310,23 @@ private fun TrackingMediaId.asAniListId(): Int = value.toIntOrNull()
 private fun String.asAniListEntryId(): Int = toIntOrNull()
     ?: throw TrackingProviderException.Remote("AniList list entry ID must be an integer: $this")
 
-private fun String.toTrackingStatus() = when (this) {
-    "CURRENT" -> TrackingStatus.CURRENT
-    "REPEATING" -> TrackingStatus.REPEATING
-    "COMPLETED" -> TrackingStatus.COMPLETED
-    "PAUSED" -> TrackingStatus.PAUSED
-    "DROPPED" -> TrackingStatus.DROPPED
-    "PLANNING" -> TrackingStatus.PLANNING
-    else -> throw TrackingProviderException.Remote("Unknown AniList status: $this")
+private fun String.toTrackingStatus(): TrackingStatus = (AniListMediaListStatus.fromWire(this)
+    ?: throw TrackingProviderException.Remote("Unknown AniList status: $this")).toTrackingStatus()
+
+private fun AniListMediaListStatus.toTrackingStatus() = when (this) {
+    AniListMediaListStatus.CURRENT -> TrackingStatus.CURRENT
+    AniListMediaListStatus.REPEATING -> TrackingStatus.REPEATING
+    AniListMediaListStatus.COMPLETED -> TrackingStatus.COMPLETED
+    AniListMediaListStatus.PAUSED -> TrackingStatus.PAUSED
+    AniListMediaListStatus.DROPPED -> TrackingStatus.DROPPED
+    AniListMediaListStatus.PLANNING -> TrackingStatus.PLANNING
 }
 
 private fun TrackingStatus.toAniListStatus() = when (this) {
-    TrackingStatus.CURRENT -> "CURRENT"
-    TrackingStatus.COMPLETED -> "COMPLETED"
-    TrackingStatus.PAUSED -> "PAUSED"
-    TrackingStatus.DROPPED -> "DROPPED"
-    TrackingStatus.PLANNING -> "PLANNING"
-    TrackingStatus.REPEATING -> "REPEATING"
+    TrackingStatus.CURRENT -> AniListMediaListStatus.CURRENT
+    TrackingStatus.COMPLETED -> AniListMediaListStatus.COMPLETED
+    TrackingStatus.PAUSED -> AniListMediaListStatus.PAUSED
+    TrackingStatus.DROPPED -> AniListMediaListStatus.DROPPED
+    TrackingStatus.PLANNING -> AniListMediaListStatus.PLANNING
+    TrackingStatus.REPEATING -> AniListMediaListStatus.REPEATING
 }
