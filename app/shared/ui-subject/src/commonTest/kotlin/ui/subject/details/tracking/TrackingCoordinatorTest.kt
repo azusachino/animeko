@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -64,6 +65,20 @@ class TrackingCoordinatorTest {
 
         assertEquals(43, info.subjectId)
         assertEquals("Subject Name", info.name)
+    }
+
+    @Test
+    fun subjectInfoReemitsWhenSubjectCollectionChanges() = runTest {
+        val names = MutableStateFlow("First Name")
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(emptyList()), FakeSubjectCollectionRepository(names))
+        val emittedNames = mutableListOf<String>()
+        backgroundScope.launch { coordinator.subjectInfo(43).collect { emittedNames += it.name } }
+        runCurrent()
+
+        names.value = "Second Name"
+        runCurrent()
+
+        assertEquals(listOf("First Name", "Second Name"), emittedNames)
     }
 
     @Test
@@ -165,9 +180,14 @@ class TrackingCoordinatorTest {
     }
 
     /** Only [subjectCollectionFlow] is used by the coordinator; the other members are unreachable here. */
-    private class FakeSubjectCollectionRepository : SubjectCollectionRepository() {
+    private class FakeSubjectCollectionRepository(
+        private val names: Flow<String> = flowOf("Subject Name"),
+    ) : SubjectCollectionRepository() {
         override fun subjectCollectionFlow(subjectId: Int): Flow<SubjectCollectionInfo> =
-            flowOf(createTestSubjectCollection(subjectId, emptyList(), UnifiedCollectionType.DOING))
+            names.map { name ->
+                createTestSubjectCollection(subjectId, emptyList(), UnifiedCollectionType.DOING)
+                    .let { it.copy(subjectInfo = it.subjectInfo.copy(name = name)) }
+            }
 
         override fun subjectCollectionCountsFlow(): Flow<SubjectCollectionCounts?> = throw UnsupportedOperationException()
         override fun subjectCollectionsPager(

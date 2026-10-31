@@ -9,47 +9,22 @@
 
 package me.him188.ani.app.ui.subject.details.tracking
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,78 +32,28 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.atStartOfDayIn
-import kotlinx.datetime.toLocalDateTime
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.preferredDisplayName
 import me.him188.ani.app.domain.usecase.GlobalKoin
 import me.him188.ani.app.navigation.LocalNavigator
-import me.him188.ani.app.ui.foundation.icons.TrackingIconRegistry
-import me.him188.ani.app.ui.foundation.tracking.TrackingAccountConnector
-import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
-import me.him188.ani.app.ui.foundation.tracking.TrackingAccountStatus
-import me.him188.ani.app.ui.foundation.tracking.TrackingLoginAction
-import me.him188.ani.app.ui.foundation.AsyncImage
 import me.him188.ani.app.ui.foundation.LocalIsPreviewing
 import me.him188.ani.app.ui.foundation.LocalSubjectAppearanceSettings
-import me.him188.ani.tracking.api.TrackingDate
+import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
+import me.him188.ani.app.ui.foundation.tracking.TrackingLoginAction
+import me.him188.ani.app.ui.lang.*
 import me.him188.ani.tracking.api.TrackingDateField
 import me.him188.ani.tracking.api.TrackingEdit
 import me.him188.ani.tracking.api.TrackingMedia
-import me.him188.ani.tracking.api.TrackingMediaId
 import me.him188.ani.tracking.api.TrackingProviderId
-import me.him188.ani.tracking.api.TrackingProviderException
-import me.him188.ani.tracking.api.TrackingRegistry
-import me.him188.ani.tracking.api.TrackingScore
-import me.him188.ani.tracking.api.TrackingSnapshot
 import me.him188.ani.tracking.api.TrackingStatus
-import me.him188.ani.app.ui.lang.*
 import org.jetbrains.compose.resources.stringResource
-import kotlin.time.Instant
-
-private enum class Field { STATUS, PROGRESS, SCORE, START_DATE, FINISH_DATE }
-
-private sealed interface TrackingUiError {
-    data class Failure(val message: String) : TrackingUiError
-    data class RateLimited(val retryAfterSeconds: Int?) : TrackingUiError
-}
-
-private fun trackingUiError(failure: Throwable, fallbackText: String): TrackingUiError =
-    (failure as? TrackingProviderException.RateLimited)?.let {
-        TrackingUiError.RateLimited(it.retryAfterMillis?.let(::retryAfterSeconds))
-    } ?: TrackingUiError.Failure(fallbackText)
-
-@Composable
-private fun TrackingErrorMessage(error: TrackingUiError, onRetry: (() -> Unit)? = null) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            when (error) {
-                is TrackingUiError.Failure -> error.message
-                is TrackingUiError.RateLimited -> error.retryAfterSeconds?.let {
-                    stringResource(Lang.tracking_error_rate_limited, it)
-                } ?: stringResource(Lang.tracking_error_rate_limited_unknown)
-            },
-            color = MaterialTheme.colorScheme.error,
-        )
-        if (onRetry != null) {
-            TextButton(onClick = onRetry) { Text(stringResource(Lang.tracking_action_retry)) }
-        }
-    }
-}
 
 @Composable
 internal fun TrackingSection(subjectId: Int, modifier: Modifier = Modifier) {
@@ -286,50 +211,25 @@ private fun TrackingSectionContent(subjectId: Int, modifier: Modifier) {
     }
 
     searching?.let { id ->
-        Dialog(onDismissRequest = { searchRevision++; searching = null }) {
-            Surface(shape = MaterialTheme.shapes.large) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(Lang.tracking_search_dialog_title), style = MaterialTheme.typography.titleMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(query, { searchRevision++; query = it; results = emptyList(); error = null },
-                            modifier = Modifier.weight(1f), placeholder = { Text(stringResource(Lang.tracking_search_placeholder)) }, singleLine = true,
-                            trailingIcon = {
-                                if (query.isNotEmpty()) IconButton(onClick = { searchRevision++; query = ""; results = emptyList(); error = null }) {
-                                    Icon(Icons.Default.Close, contentDescription = stringResource(Lang.tracking_search_clear_description))
-                                }
-                            },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { if (busy == null) runSearch() }),
-                        )
-                        IconButton(onClick = { runSearch() }, enabled = busy == null && query.isNotBlank()) {
-                            Icon(Icons.Default.Search, contentDescription = stringResource(Lang.tracking_search_icon_description))
-                        }
-                    }
-                    if (busy == id) CircularProgressIndicator(Modifier.size(20.dp))
-                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                        items(results, key = { it.id.value }) { media ->
-                            Row(Modifier.fillMaxWidth().clickable(enabled = busy == null) {
-                                scope.launch {
-                                    busy = id
-                                    try { coordinator.bind(subjectId, id, media.id); searching = null; error = null }
-                                    catch (failure: CancellationException) { throw failure }
-                                    catch (failure: Exception) { error = trackingUiError(failure, linkFailedText) }
-                                    finally { busy = null }
-                                }
-                            }.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                media.coverImageUrl?.takeIf { it.isNotBlank() }?.let { cover ->
-                                    AsyncImage(cover, contentDescription = null, modifier = Modifier.width(44.dp).height(62.dp),
-                                        contentScale = ContentScale.Crop)
-                                }
-                                Text(media.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                    error?.let { TrackingErrorMessage(it) }
+        TrackingSearchDialog(
+            providerId = id,
+            query = query,
+            results = results,
+            busy = busy,
+            error = error,
+            onDismiss = { searchRevision++; searching = null },
+            onQueryChange = { searchRevision++; query = it; results = emptyList(); error = null },
+            onSearch = { runSearch() },
+            onPick = { mediaId ->
+                scope.launch {
+                    busy = id
+                    try { coordinator.bind(subjectId, id, mediaId); searching = null; error = null }
+                    catch (failure: CancellationException) { throw failure }
+                    catch (failure: Exception) { error = trackingUiError(failure, linkFailedText) }
+                    finally { busy = null }
                 }
-            }
-        }
+            },
+        )
     }
 
     editor?.let { (id, field) ->
@@ -400,204 +300,5 @@ private fun TrackingSectionContent(subjectId: Int, modifier: Modifier) {
             }) { Text(stringResource(Lang.tracking_confirm_mark_all_action)) } },
             dismissButton = { TextButton(onClick = { markAllPrompt = null }) { Text(stringResource(Lang.tracking_confirm_keep_episodes_action)) } },
         )
-    }
-}
-
-@Composable
-private fun TrackingCard(
-    card: TrackingCardModel,
-    updating: Boolean,
-    onField: (Field) -> Unit,
-    onSearch: () -> Unit,
-    onRefresh: () -> Unit,
-    onAdd: (TrackingMediaId) -> Unit,
-    onOpen: (String) -> Unit,
-    onUnlink: () -> Unit,
-    onDelete: () -> Unit,
-    onPrivacy: (Boolean) -> Unit,
-) {
-    val snapshot = (card.load as? TrackingLoad.Ready)?.snapshot
-    val entry = snapshot?.entry
-    var menuOpen by remember { mutableStateOf(false) }
-    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val icon = remember(card.providerId) {
-                    GlobalKoin.get<TrackingIconRegistry>().find(card.providerId)
-                }
-                if (icon != null) icon.Icon() else Text(card.providerName.take(1), style = MaterialTheme.typography.titleLarge)
-                Column(Modifier.weight(1f)) {
-                    Text(card.providerName, style = MaterialTheme.typography.titleMedium)
-                    Text(snapshot?.media?.title ?: if (card.capabilities.needsMatchSearch) stringResource(Lang.tracking_card_not_matched) else stringResource(Lang.tracking_card_collection),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (card.load is TrackingLoad.Loading || updating) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                Box {
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = stringResource(Lang.tracking_options_menu_description)) }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        snapshot?.media?.siteUrl?.takeIf { it.isNotBlank() }?.let { url ->
-                            DropdownMenuItem(text = { Text(stringResource(Lang.tracking_menu_open_on_provider, card.providerName)) }, onClick = { menuOpen = false; onOpen(url) })
-                        }
-                        DropdownMenuItem(text = { Text(stringResource(Lang.tracking_menu_refresh)) }, onClick = { menuOpen = false; onRefresh() })
-                        if (card.capabilities.needsMatchSearch) {
-                            DropdownMenuItem(text = { Text(stringResource(Lang.tracking_menu_change_match)) }, onClick = { menuOpen = false; onSearch() })
-                            if (snapshot != null) DropdownMenuItem(text = { Text(stringResource(Lang.tracking_menu_unlink)) }, onClick = { menuOpen = false; onUnlink() })
-                        }
-                        if (entry != null && card.capabilities.canEditPrivacy) {
-                            DropdownMenuItem(text = { Text(if (entry.isPrivate) stringResource(Lang.tracking_menu_make_public) else stringResource(Lang.tracking_menu_make_private)) },
-                                onClick = { menuOpen = false; onPrivacy(!entry.isPrivate) })
-                        }
-                        if (entry != null && card.capabilities.canDeleteRemoteEntry) {
-                            DropdownMenuItem(text = { Text(stringResource(Lang.tracking_menu_delete_remote)) }, onClick = { menuOpen = false; onDelete() })
-                        }
-                    }
-                }
-            }
-            when {
-                card.load is TrackingLoad.RateLimited -> TrackingErrorMessage(
-                    TrackingUiError.RateLimited(card.load.retryAfterSeconds),
-                    onRetry = onRefresh,
-                )
-                card.load is TrackingLoad.Failed ->
-                    Text(stringResource(Lang.tracking_error_load_failed), color = MaterialTheme.colorScheme.error)
-                (snapshot == null && card.capabilities.needsMatchSearch) || entry == null ->
-                    TextButton(onClick = { snapshot?.media?.id?.let(onAdd) ?: onSearch() }) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Text(stringResource(Lang.tracking_card_add_tracking))
-                    }
-                else -> {
-                    Row(Modifier.fillMaxWidth()) {
-                        if (card.capabilities.canEditStatus) TrackingFieldCell(
-                            entry.status?.displayLabel() ?: stringResource(Lang.tracking_field_status),
-                            Modifier.weight(1f), !updating) { onField(Field.STATUS) }
-                        if (card.capabilities.canEditProgress) TrackingFieldCell(
-                            "${entry.progress}${snapshot.media.totalEpisodes?.let { " / $it" } ?: ""}",
-                            Modifier.weight(1f), !updating) { onField(Field.PROGRESS) }
-                        if (card.capabilities.canEditScore) TrackingFieldCell(
-                            if (entry.score.value == 0) stringResource(Lang.tracking_field_score) else "${(entry.score.value + 5) / 10} / 10",
-                            Modifier.weight(1f), !updating) { onField(Field.SCORE) }
-                    }
-                    if (card.capabilities.canEditDates) Row(Modifier.fillMaxWidth()) {
-                        TrackingFieldCell(entry.startedAt.dateLabel(stringResource(Lang.tracking_field_start_date)), Modifier.weight(1f), !updating) { onField(Field.START_DATE) }
-                        TrackingFieldCell(entry.completedAt.dateLabel(stringResource(Lang.tracking_field_finish_date)), Modifier.weight(1f), !updating) { onField(Field.FINISH_DATE) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TrackingFieldCell(label: String, modifier: Modifier, enabled: Boolean, onClick: () -> Unit) {
-    Box(modifier.height(48.dp).clickable(enabled = enabled, onClick = onClick)) {
-        Text(label, Modifier.align(Alignment.Center), maxLines = 1, overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun TrackingStatus.displayLabel(): String = when (this) {
-    TrackingStatus.PLANNING -> stringResource(Lang.tracking_status_planning)
-    TrackingStatus.CURRENT -> stringResource(Lang.tracking_status_current)
-    TrackingStatus.COMPLETED -> stringResource(Lang.tracking_status_completed)
-    TrackingStatus.PAUSED -> stringResource(Lang.tracking_status_paused)
-    TrackingStatus.DROPPED -> stringResource(Lang.tracking_status_dropped)
-    TrackingStatus.REPEATING -> stringResource(Lang.tracking_status_repeating)
-}
-
-@Composable
-private fun TrackingChoiceDialog(card: TrackingCardModel, snapshot: TrackingSnapshot, field: Field,
-    onDismiss: () -> Unit, onSelect: (TrackingEdit) -> Unit) {
-    val entry = checkNotNull(snapshot.entry)
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = MaterialTheme.shapes.large) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(when (field) {
-                    Field.STATUS -> stringResource(Lang.tracking_dialog_title_status)
-                    Field.PROGRESS -> stringResource(Lang.tracking_dialog_title_progress)
-                    else -> stringResource(Lang.tracking_dialog_title_score)
-                }, style = MaterialTheme.typography.titleMedium)
-                LazyColumn(Modifier.heightIn(max = 300.dp)) {
-                    when (field) {
-                        Field.STATUS -> items(card.statusOptions) { option ->
-                            TrackingChoice(option.status.displayLabel(), entry.status == option.status) { onSelect(TrackingEdit.Status(option.status)) }
-                        }
-                        Field.PROGRESS -> {
-                            val episodes = snapshot.episodes
-                            if (episodes != null) items(episodes) { episode ->
-                                TrackingChoice(stringResource(Lang.tracking_choice_episode_format, episode.number), episode.watched) {
-                                    onSelect(TrackingEdit.Episode(episode.id, !episode.watched))
-                                }
-                            } else items((0..(snapshot.media.totalEpisodes ?: maxOf(entry.progress + 20, 100))).toList()) { count ->
-                                TrackingChoice(count.toString(), entry.progress == count) { onSelect(TrackingEdit.Progress(count)) }
-                            }
-                        }
-                        Field.SCORE -> {
-                            items((10 downTo 1).toList()) { score ->
-                                TrackingChoice(score.toString(), (entry.score.value + 5) / 10 == score) {
-                                    onSelect(TrackingEdit.Score(TrackingScore(score * 10)))
-                                }
-                            }
-                            item { TrackingChoice(stringResource(Lang.tracking_choice_clear_score), entry.score == TrackingScore.Unrated) {
-                                onSelect(TrackingEdit.Score(TrackingScore.Unrated))
-                            } }
-                        }
-                        else -> Unit
-                    }
-                }
-                TextButton(onClick = onDismiss) { Text(stringResource(Lang.subject_collection_cancel)) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TrackingChoice(label: String, selected: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface) {
-        Text(label, Modifier.fillMaxWidth().padding(12.dp))
-    }
-}
-
-private fun TrackingDate?.dateLabel(placeholder: String): String =
-    this?.let { listOfNotNull(year?.toString(), month?.toString()?.padStart(2, '0'), day?.toString()?.padStart(2, '0'))
-        .joinToString("-").ifEmpty { placeholder } } ?: placeholder
-
-@Composable
-private fun TrackingDateEditor(title: String, date: TrackingDate?, onDismiss: () -> Unit, onSelect: (TrackingDate?) -> Unit) {
-    val initial = remember(date) {
-        runCatching { LocalDate(requireNotNull(date?.year), requireNotNull(date.month), requireNotNull(date.day))
-            .atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds() }.getOrNull()
-    }
-    val state = rememberDatePickerState(initialSelectedDateMillis = initial)
-    DatePickerDialog(onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = {
-            val selected = state.selectedDateMillis?.let { Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.UTC).date }
-            onSelect(selected?.let { TrackingDate(it.year, it.monthNumber, it.dayOfMonth) })
-        }) { Text(stringResource(Lang.tracking_action_save)) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Lang.subject_collection_cancel)) } }) { DatePicker(state) }
-}
-
-/** Offers the provider's own sign-in so a guest never has to go through a generic Animeko login first. */
-@Composable
-private fun TrackingSignInRow(connector: TrackingAccountConnector, onLogin: (TrackingLoginAction) -> Unit) {
-    val state by connector.state.collectAsStateWithLifecycle(null)
-    val current = state ?: return
-    if (current.connected || current.refreshing) return
-    val icon = remember(connector.providerId) {
-        GlobalKoin.get<TrackingIconRegistry>().find(connector.providerId)
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        icon?.Icon()
-        TextButton(onClick = { onLogin(connector.loginAction) }) {
-            Text(
-                if (current.status == TrackingAccountStatus.SignInWithProvider) {
-                    stringResource(Lang.settings_tracking_sign_in_with, connector.displayName)
-                } else {
-                    stringResource(Lang.tracking_connect_provider, connector.displayName)
-                },
-            )
-        }
     }
 }
