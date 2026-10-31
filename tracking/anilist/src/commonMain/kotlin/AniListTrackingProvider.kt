@@ -133,15 +133,15 @@ class AniListTrackingProvider(
         didWatchEpisode: Boolean,
         totalEpisodes: Int?,
     ): TrackingListEntry {
-        if (!didWatchEpisode || entry.status == TrackingStatus.COMPLETED) return saveExisting(entry)
+        // Dropped and on-hold entries are the user's deliberate choice; only the progress number changes.
+        if (!didWatchEpisode || entry.status in STATUSES_KEPT_ON_WATCH) return saveExisting(entry)
         val total = totalEpisodes ?: refresh(entry.mediaId)?.media?.totalEpisodes
-        val transitioned = when {
-            total != null && entry.progress >= total ->
-                entry.copy(status = TrackingStatus.COMPLETED)
-            entry.status != TrackingStatus.REPEATING -> entry.copy(status = TrackingStatus.CURRENT)
-            else -> entry
+        val status = when {
+            total != null && entry.progress >= total -> TrackingStatus.COMPLETED
+            entry.status == TrackingStatus.PLANNING -> TrackingStatus.CURRENT
+            else -> entry.status
         }
-        return saveExisting(transitioned)
+        return saveExisting(entry.copy(status = status))
     }
 
     override suspend fun updateDate(entry: TrackingListEntry, field: TrackingDateField, date: TrackingDate?): TrackingListEntry = call {
@@ -235,6 +235,7 @@ class AniListTrackingProvider(
     companion object {
         private const val POINT_100 = "POINT_100"
         val ID = TrackingProviderId("anilist")
+        private val STATUSES_KEPT_ON_WATCH = setOf(TrackingStatus.COMPLETED, TrackingStatus.PAUSED, TrackingStatus.DROPPED)
 
         /** OAuth client registered on AniList with the redirect URI `ani://anilist-auth`. */
         const val CLIENT_ID = "51393"

@@ -23,6 +23,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.him188.ani.tracking.api.TrackingAccountState
@@ -218,6 +219,82 @@ class AniListTrackingProviderTest {
         val variables = Json.parseToJsonElement(mutationBody).jsonObject.getValue("variables").jsonObject
         assertEquals("\"COMPLETED\"", variables.getValue("status").toString())
         assertEquals("28", variables.getValue("progress").toString())
+    }
+
+    @Test
+    fun watchedEpisodeKeepsDroppedStatusAndSavesProgress() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.DROPPED, progress = 28), totalEpisodes = 28)
+
+        assertEquals("\"DROPPED\"", variables.getValue("status").toString())
+        assertEquals("28", variables.getValue("progress").toString())
+    }
+
+    @Test
+    fun watchedEpisodeKeepsOnHoldStatusAndSavesProgress() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.PAUSED, progress = 6), totalEpisodes = 28)
+
+        assertEquals("\"PAUSED\"", variables.getValue("status").toString())
+        assertEquals("6", variables.getValue("progress").toString())
+    }
+
+    @Test
+    fun watchedFinalEpisodeOfOnHoldEntryDoesNotComplete() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.PAUSED, progress = 28), totalEpisodes = 28)
+
+        assertEquals("\"PAUSED\"", variables.getValue("status").toString())
+    }
+
+    @Test
+    fun watchedEpisodeMovesPlanningToCurrent() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.PLANNING, progress = 1), totalEpisodes = 28)
+
+        assertEquals("\"CURRENT\"", variables.getValue("status").toString())
+        assertEquals("1", variables.getValue("progress").toString())
+    }
+
+    @Test
+    fun watchedFinalEpisodeMovesPlanningToCompleted() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.PLANNING, progress = 28), totalEpisodes = 28)
+
+        assertEquals("\"COMPLETED\"", variables.getValue("status").toString())
+    }
+
+    @Test
+    fun watchedEpisodeKeepsCurrentStatus() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.CURRENT, progress = 5), totalEpisodes = 28)
+
+        assertEquals("\"CURRENT\"", variables.getValue("status").toString())
+        assertEquals("5", variables.getValue("progress").toString())
+    }
+
+    @Test
+    fun watchedEpisodeKeepsRepeatingStatus() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.REPEATING, progress = 5), totalEpisodes = 28)
+
+        assertEquals("\"REPEATING\"", variables.getValue("status").toString())
+    }
+
+    @Test
+    fun watchedFinalEpisodeMovesRepeatingToCompleted() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.REPEATING, progress = 28), totalEpisodes = 28)
+
+        assertEquals("\"COMPLETED\"", variables.getValue("status").toString())
+    }
+
+    @Test
+    fun watchedEpisodeKeepsCompletedStatus() = runTest {
+        val variables = savedMutationVariables(watchEntry(TrackingStatus.COMPLETED, progress = 28), totalEpisodes = 28)
+
+        assertEquals("\"COMPLETED\"", variables.getValue("status").toString())
+    }
+
+    @Test
+    fun unwatchNeverChangesStatus() = runTest {
+        val onHold = savedMutationVariables(watchEntry(TrackingStatus.PAUSED, progress = 5), didWatchEpisode = false)
+        val finished = savedMutationVariables(watchEntry(TrackingStatus.CURRENT, progress = 28), didWatchEpisode = false, totalEpisodes = 28)
+
+        assertEquals("\"PAUSED\"", onHold.getValue("status").toString())
+        assertEquals("\"CURRENT\"", finished.getValue("status").toString())
     }
 
     @Test
@@ -496,6 +573,24 @@ class AniListTrackingProviderTest {
 
         // 8 minutes after the first refresh, but only 4 after login, so no extra request.
         assertEquals(2, calls)
+    }
+
+    private fun watchEntry(status: TrackingStatus, progress: Int) =
+        TrackingListEntry(TrackingMediaId("1"), status, progress, TrackingScore(80), remoteEntryId = "9")
+
+    /** Runs one update against the fake engine and returns the SaveMediaListEntry mutation variables. */
+    private suspend fun savedMutationVariables(
+        entry: TrackingListEntry,
+        didWatchEpisode: Boolean = true,
+        totalEpisodes: Int? = null,
+    ): JsonObject {
+        var mutationBody = ""
+        val provider = provider { request ->
+            mutationBody = request.body.toByteArray().decodeToString()
+            respondJson("""{"data":{"SaveMediaListEntry":{"id":9,"mediaId":1,"status":"CURRENT","score":80,"progress":0}}}""")
+        }
+        provider.update(entry, didWatchEpisode, totalEpisodes)
+        return Json.parseToJsonElement(mutationBody).jsonObject.getValue("variables").jsonObject
     }
 
     private fun provider(
