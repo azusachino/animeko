@@ -52,7 +52,10 @@ class DesktopAniListAccountConnector(private val provider: AniListTrackingProvid
     override suspend fun disconnect() = provider.logout()
 
     internal suspend fun completeRedirect(token: String) {
-        if (!pendingLogin.consume()) return
+        if (!pendingLogin.consume()) {
+            logger<DesktopAniListAccountConnector>().warn { "AniList sign-in redirect ignored: no pending login" }
+            return
+        }
         provider.login(TrackingLoginCredentials(secret = token))
     }
 }

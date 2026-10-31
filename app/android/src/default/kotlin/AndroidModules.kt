@@ -109,7 +109,7 @@ fun getAndroidModules(
     single<TrackingIconRenderer> { AniListTrackingIcon(AniListTrackingProvider.ID) }
     val aniListPendingLogin = PendingLoginGate()
     single<TrackingAccountConnector> { AniListTrackingAccountConnector(get<AniListTrackingProvider>(), aniListPendingLogin) }
-    single { AniListAuthRedirectHandler(get<AniListTrackingProvider>(), aniListPendingLogin) }
+    single { AniListAuthRedirectHandler(get<AniListTrackingProvider>(), aniListPendingLogin, coroutineScope) }
     single<TrackingAuthRedirectHandler> { get<AniListAuthRedirectHandler>() }
     single { TrackingAuthRedirectRouter(getAll()) }
     single<TrackingSource> { get<AniListTrackingSource>() }

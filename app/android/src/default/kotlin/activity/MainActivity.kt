@@ -103,9 +103,9 @@ class MainActivity : AniComponentActivity(), PictureInPictureHost {
         val data = intent.data ?: return
         if (data.scheme != "ani") return
         trackingAuthRedirectRouter.handlerFor(data.host)?.let { handler ->
-            handler.handle(intent, lifecycleScope) { success ->
+            handler.handle(intent) { success ->
                 val outcome = if (success) "connected" else "connection failed"
-                Toast.makeText(this, "${handler.providerName} $outcome", Toast.LENGTH_SHORT).show()
+                Toast.makeText(applicationContext, "${handler.providerName} $outcome", Toast.LENGTH_SHORT).show()
             }
             return
         }

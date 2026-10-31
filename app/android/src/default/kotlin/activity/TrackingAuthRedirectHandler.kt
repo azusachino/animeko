@@ -10,13 +10,12 @@
 package me.him188.ani.android.activity
 
 import android.content.Intent
-import kotlinx.coroutines.CoroutineScope
 
 internal interface TrackingAuthRedirectHandler {
     val host: String
     val providerName: String
 
-    fun handle(intent: Intent, scope: CoroutineScope, onResult: (Boolean) -> Unit): Boolean
+    fun handle(intent: Intent, onResult: (Boolean) -> Unit): Boolean
 }
 
 internal class TrackingAuthRedirectRouter(handlers: List<TrackingAuthRedirectHandler>) {

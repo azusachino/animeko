@@ -12,7 +12,9 @@ package me.him188.ani.android.activity
 import android.content.Intent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.him188.ani.app.tracking.anilist.AniListTrackingProvider
 import me.him188.ani.app.tracking.anilist.parseAniListOAuthRedirect
 import me.him188.ani.tracking.api.PendingLoginGate
@@ -21,16 +23,21 @@ import me.him188.ani.tracking.api.TrackingLoginCredentials
 internal class AniListAuthRedirectHandler(
     private val provider: AniListTrackingProvider,
     private val pendingLogin: PendingLoginGate,
+    // App-lifetime scope so the login survives Activity recreation; the gate is already consumed.
+    private val appScope: CoroutineScope,
 ) : TrackingAuthRedirectHandler {
     override val host = "anilist-auth"
     override val providerName = "AniList"
 
-    override fun handle(intent: Intent, scope: CoroutineScope, onResult: (Boolean) -> Unit): Boolean {
+    override fun handle(intent: Intent, onResult: (Boolean) -> Unit): Boolean {
         val token = intent.data?.toString()?.let(::parseAniListOAuthRedirect) ?: return false
 
         intent.data = null
-        if (!pendingLogin.consume()) return true
-        scope.launch {
+        if (!pendingLogin.consume()) {
+            onResult(false)
+            return true
+        }
+        appScope.launch {
             val success = try {
                 provider.login(TrackingLoginCredentials(secret = token))
                 true
@@ -39,7 +46,7 @@ internal class AniListAuthRedirectHandler(
             } catch (_: Exception) {
                 false
             }
-            onResult(success)
+            withContext(Dispatchers.Main) { onResult(success) }
         }
         return true
     }

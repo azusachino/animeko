@@ -46,7 +46,10 @@ class IosAniListAccountConnector(private val provider: AniListTrackingProvider) 
     override suspend fun disconnect() = provider.logout()
 
     suspend fun completeRedirect(token: String) {
-        if (!pendingLogin.consume()) return
+        if (!pendingLogin.consume()) {
+            logger<IosAniListAccountConnector>().warn { "AniList sign-in redirect ignored: no pending login" }
+            return
+        }
         provider.login(TrackingLoginCredentials(secret = token))
     }
 }
