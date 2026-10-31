@@ -13,8 +13,10 @@ import java.util.prefs.Preferences
 import me.him188.ani.app.data.tracking.TrackingBindingStore
 
 /** Only non-secret account and title IDs are stored here. */
-class DesktopAniListBindingStore : TrackingBindingStore {
-    private val preferences = Preferences.userRoot().node("me/him188/ani/tracking/anilist-bindings")
+class DesktopAniListBindingStore(
+    nodeName: String = "anilist-bindings",
+) : TrackingBindingStore {
+    private val preferences = Preferences.userRoot().node("me/him188/ani/tracking/$nodeName")
 
     override fun get(key: String): String? = preferences.get(key, null)
 

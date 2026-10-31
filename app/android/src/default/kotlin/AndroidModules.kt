@@ -28,6 +28,7 @@ import me.him188.ani.app.domain.episode.EpisodeTrackingSync
 import me.him188.ani.app.tracking.anilist.AniListTrackingProvider
 import me.him188.ani.app.tracking.anilist.createAniListHttpClient
 import me.him188.ani.app.data.tracking.AniListTrackingSource
+import me.him188.ani.app.data.tracking.TrackingBindingStore
 import me.him188.ani.android.tracking.AndroidAniListBindingStore
 import me.him188.ani.app.ui.foundation.icons.AniListTrackingIcon
 import me.him188.ani.android.tracking.AniListTrackingAccountConnector
@@ -73,6 +74,7 @@ import me.him188.ani.app.platform.AppTerminator
 import me.him188.ani.app.platform.ContextMP
 import me.him188.ani.app.platform.files
 import me.him188.ani.app.platform.findActivity
+import me.him188.ani.app.platform.ANILIST_PENDING_SYNC_STORE
 import me.him188.ani.app.platform.torrentMediaResolvers
 import me.him188.ani.app.tools.update.AndroidUpdateInstaller
 import me.him188.ani.app.tools.update.UpdateInstaller
@@ -89,6 +91,7 @@ import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 import org.koin.android.ext.koin.androidContext
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import java.io.File
 import kotlin.concurrent.thread
@@ -106,6 +109,7 @@ fun getAndroidModules(
             AndroidTrackingCredentialStore(androidContext(), AniListTrackingProvider.ID))
     }
     single { AniListTrackingSource(AndroidAniListBindingStore(androidContext()), get<AniListTrackingProvider>(), inject()) }
+    single<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE)) { AndroidAniListBindingStore(androidContext(), "anilist-pending-sync") }
     single<TrackingIconRenderer> { AniListTrackingIcon(AniListTrackingProvider.ID) }
     val aniListPendingLogin = PendingLoginGate()
     single<TrackingAccountConnector> { AniListTrackingAccountConnector(get<AniListTrackingProvider>(), aniListPendingLogin) }

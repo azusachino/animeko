@@ -12,9 +12,8 @@ import platform.Foundation.NSUserDefaults
 /** Only non-secret account and title IDs are stored here. */
 class IosAniListBindingStore(
     private val userDefaults: NSUserDefaults = NSUserDefaults.standardUserDefaults,
+    private val prefix: String = "anilist-binding:",
 ) : TrackingBindingStore {
-    private val prefix = "anilist-binding:"
-
     override fun get(key: String): String? = userDefaults.stringForKey(prefix + key)
 
     override fun put(key: String, value: String) {

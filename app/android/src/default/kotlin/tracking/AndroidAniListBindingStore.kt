@@ -12,8 +12,11 @@ package me.him188.ani.android.tracking
 import android.content.Context
 import me.him188.ani.app.data.tracking.TrackingBindingStore
 
-class AndroidAniListBindingStore(context: Context) : TrackingBindingStore {
-    private val preferences = context.applicationContext.getSharedPreferences("anilist-bindings", Context.MODE_PRIVATE)
+class AndroidAniListBindingStore(
+    context: Context,
+    storageName: String = "anilist-bindings",
+) : TrackingBindingStore {
+    private val preferences = context.applicationContext.getSharedPreferences(storageName, Context.MODE_PRIVATE)
 
     override fun get(key: String): String? = preferences.getString(key, null)
 

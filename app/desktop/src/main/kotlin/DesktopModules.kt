@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import me.him188.ani.app.data.tracking.AniListTrackingSource
+import me.him188.ani.app.data.tracking.TrackingBindingStore
 import me.him188.ani.app.desktop.tracking.DesktopAniListAccountConnector
 import me.him188.ani.app.desktop.tracking.DesktopAniListBindingStore
 import me.him188.ani.app.desktop.tracking.DesktopRegistryEpisodeTrackingSync
@@ -60,6 +61,7 @@ import me.him188.ani.app.navigation.BrowserNavigator
 import me.him188.ani.app.navigation.DesktopBrowserNavigator
 import me.him188.ani.app.platform.AppTerminator
 import me.him188.ani.app.platform.DefaultAppTerminator
+import me.him188.ani.app.platform.ANILIST_PENDING_SYNC_STORE
 import me.him188.ani.app.platform.DesktopContext
 import me.him188.ani.app.platform.GrantedPermissionManager
 import me.him188.ani.app.platform.PermissionManager
@@ -79,6 +81,7 @@ import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.Arch
 import me.him188.ani.utils.platform.Platform
 import me.him188.ani.utils.platform.currentPlatformDesktop
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.openani.mediamp.MediampPlayerFactory
 import org.openani.mediamp.MediampPlayerFactoryLoader
@@ -102,6 +105,7 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
             )
         }
         single { AniListTrackingSource(DesktopAniListBindingStore(), get<AniListTrackingProvider>(), inject()) }
+        single<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE)) { DesktopAniListBindingStore("anilist-pending-sync") }
         single<TrackingSource> { get<AniListTrackingSource>() }
         single { DesktopAniListAccountConnector(get<AniListTrackingProvider>()) }
         single<TrackingAccountConnector> { get<DesktopAniListAccountConnector>() }

@@ -37,6 +37,7 @@ import me.him188.ani.app.data.persistent.database.AniDatabase
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.data.repository.user.UserRepository
 import me.him188.ani.app.data.tracking.AniListTrackingSource
+import me.him188.ani.app.data.tracking.TrackingBindingStore
 import me.him188.ani.app.domain.episode.EpisodeTrackingSync
 import me.him188.ani.app.domain.foundation.HttpClientProvider
 import me.him188.ani.app.domain.foundation.get
@@ -80,6 +81,7 @@ import me.him188.ani.app.navigation.BrowserNavigator
 import me.him188.ani.app.navigation.IosBrowserNavigator
 import me.him188.ani.app.navigation.LocalNavigator
 import me.him188.ani.app.platform.AniHostingUIViewController
+import me.him188.ani.app.platform.ANILIST_PENDING_SYNC_STORE
 import me.him188.ani.app.platform.AppStartupTasks
 import me.him188.ani.app.platform.GrantedPermissionManager
 import me.him188.ani.app.platform.IosContext
@@ -120,6 +122,7 @@ import me.him188.ani.utils.logging.error
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.annotations.TestOnly
 import org.koin.core.context.startKoin
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.openani.mediamp.MediampPlayerFactory
 import org.openani.mediamp.ffmpeg.FFmpegKit
@@ -385,6 +388,7 @@ fun getIosModules(
         )
     }
     single { AniListTrackingSource(IosAniListBindingStore(), get<AniListTrackingProvider>(), inject()) }
+    single<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE)) { IosAniListBindingStore(prefix = "anilist-pending-sync:") }
     single<TrackingSource> { get<AniListTrackingSource>() }
     single { IosAniListAccountConnector(get<AniListTrackingProvider>()) }
     single<TrackingAccountConnector> { get<IosAniListAccountConnector>() }

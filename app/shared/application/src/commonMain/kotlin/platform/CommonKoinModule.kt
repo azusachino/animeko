@@ -136,6 +136,7 @@ import me.him188.ani.app.ui.subject.details.state.DefaultSubjectDetailsStateFact
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateFactory
 import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
 import me.him188.ani.app.data.tracking.BangumiTrackingSource
+import me.him188.ani.app.data.tracking.TrackingBindingStore
 import me.him188.ani.app.ui.foundation.icons.BangumiTrackingIcon
 import me.him188.ani.app.ui.foundation.icons.TrackingIconRenderer
 import me.him188.ani.app.ui.foundation.icons.TrackingIconRegistry
@@ -155,6 +156,7 @@ import me.him188.ani.utils.io.resolve
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 import org.koin.core.KoinApplication
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import kotlin.time.Duration.Companion.minutes
@@ -552,8 +554,11 @@ private fun KoinApplication.otherModules(
     single<TrackingRegistry> { DefaultTrackingRegistry(listOf(get<BangumiTrackingSource>()) + getAll<TrackingSource>()) }
     single<TrackingBindingBackup> { get<TrackingRegistry>() }
     single { TrackingCoordinator(get()) }
-    single { TrackingEpisodeSynchronizer(get()) }
+    single { TrackingEpisodeSynchronizer(get(), getOrNull<TrackingBindingStore>(named(ANILIST_PENDING_SYNC_STORE))) }
 }
+
+/** Qualifier of the platform-provided [TrackingBindingStore] that holds episodes awaiting tracking sync. */
+const val ANILIST_PENDING_SYNC_STORE = "anilist-pending-sync"
 
 /**
  * 会在非 preview 环境调用. 用来初始化一些模块
@@ -614,6 +619,16 @@ fun KoinApplication.startCommonKoinModule(
         val manager = koin.get<MediaDownloadManager>()
         for (storage in manager.storages) {
             storage.restorePersistedCaches()
+        }
+    }
+
+    coroutineScope.launch(Dispatchers.IO_) {
+        try {
+            koin.get<TrackingEpisodeSynchronizer>().retryPending()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger("ani-startup").warn(e) { "Failed to retry pending tracking sync" }
         }
     }
 
