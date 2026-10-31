@@ -147,6 +147,31 @@ class AniListTrackingSourceTest {
     }
 
     @Test
+    fun episodeWatchedAfterDeliberateSignOutIsSkippedNotQueued() = runTest(UnconfinedTestDispatcher()) {
+        val provider = FakeProvider(TrackingAccountState.LoggedOut, hasCredentials = false, signedOutByUser = true)
+        val pending = MapBindingStore()
+        val source = source(provider, bindingsOf("account-a:42" to "100"))
+        val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), pending)
+
+        synchronizer.episodeWatched(42, 1)
+
+        assertEquals(emptyMap(), pending.entries())
+        assertEquals(0, provider.viewerRequests)
+    }
+
+    @Test
+    fun episodeWatchedAfterDeliberateSignOutClearsExistingPendingEntry() = runTest(UnconfinedTestDispatcher()) {
+        val provider = FakeProvider(TrackingAccountState.LoggedOut, hasCredentials = false, signedOutByUser = true)
+        val pending = MapBindingStore().apply { map["42:1"] = "1" }
+        val source = source(provider, bindingsOf("account-a:42" to "100"))
+        val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), pending)
+
+        synchronizer.episodeWatched(42, 2)
+
+        assertEquals(emptyMap(), pending.entries())
+    }
+
+    @Test
     fun restoredBindingsForOtherAccountsAreCountedAsUnconnected() = runTest(UnconfinedTestDispatcher()) {
         val provider = FakeProvider(TrackingAccountState.LoggedIn(accountA))
         val source = source(provider, bindingsOf())
@@ -190,7 +215,11 @@ class AniListTrackingSourceTest {
     }
 
     /** Mirrors the real provider: a refresh without stored credentials fails without a viewer request. */
-    private class FakeProvider(initial: TrackingAccountState, private val hasCredentials: Boolean = true) : TrackingProvider {
+    private class FakeProvider(
+        initial: TrackingAccountState,
+        private val hasCredentials: Boolean = true,
+        private val signedOutByUser: Boolean = false,
+    ) : TrackingProvider {
         val state = MutableStateFlow(initial)
         var refreshCalls = 0
         var viewerRequests = 0
@@ -215,6 +244,7 @@ class AniListTrackingSourceTest {
         }
 
         override suspend fun logout() = unused()
+        override suspend fun isSignedOutByUser(): Boolean = signedOutByUser
         override suspend fun search(query: String): List<TrackingMedia> = unused()
         override suspend fun prepareBinding(mediaId: TrackingMediaId): TrackingMediaWithEntry? = unused()
         override suspend fun bind(entry: TrackingListEntry): TrackingListEntry = unused()

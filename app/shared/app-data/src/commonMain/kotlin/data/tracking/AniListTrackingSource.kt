@@ -219,6 +219,11 @@ class AniListTrackingSource(
             val account = try {
                 currentAccount()
             } catch (error: TrackingProviderException.Unauthorized) {
+                // A deliberate sign-out is not a failure to retry; a rejected session is.
+                if (provider.isSignedOutByUser()) {
+                    logger.info { "[tracking-sync] skip: signed out of AniList" }
+                    return
+                }
                 logger.info { "[tracking-sync] account unavailable (unauthorized) for subject $subjectId, will retry" }
                 throw error
             }

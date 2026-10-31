@@ -58,7 +58,7 @@ Android 使用：
 - AES-GCM authenticated encryption；
 - `noBackupFilesDir` 中的原子 ciphertext 文件；
 - provider-scoped `TrackingCredentialStore`；
-- logout 删除 ciphertext。
+- logout 删除 ciphertext，并写入非机密的主动退出标记（同目录 marker 文件）；登录成功时清除该标记。服务端拒绝会话不写入该标记。
 
 `utils/io` 的 `obscure` 只是带硬编码 key 的防窥混淆，不能用于追踪 token。
 
@@ -173,10 +173,10 @@ OAuth redirect 由各平台显式声明。三个平台都接收 `ani://anilist-a
    - 支持：Android、macOS Desktop、iOS。
    - 排除：Windows（不实现其凭据存储与 OAuth）。
 2. **观看同步重试**：
-   - 任一 source 抛出非取消异常时，该剧集按 `subjectId:episodeId` 保存在平台持久化的待同步存储中。未绑定、非正片、无集数或进度未增加的剧集直接跳过，不排队。未登录、AniList 会话未授权、标题刷新返回空或远端错误都属于失败。
+   - 任一 source 抛出非取消异常时，该剧集按 `subjectId:episodeId` 保存在平台持久化的待同步存储中。未绑定、非正片、无集数或进度未增加的剧集直接跳过，不排队。用户主动退出 AniList 后（平台存储中的主动退出标记为真，登录成功前保持），剧集直接跳过且不排队，同一 source 已排队的条目也随之清除。其余未登录、AniList 会话被服务端拒绝、标题刷新返回空或远端错误都属于失败。
    - 重新派发发生在应用启动、之后每次观看前，以及退避周期中。重派发会再次调用所有 source，因此 source 的写入必须单调。
    - 失败时启动一轮退避周期（已在运行时不另起），依次等待 5、10、20 分钟并重派发，即失败后约 5、15、35 分钟各一次；待同步存储清空时提前结束。
-   - 没有网络状态变化的触发。登录不会触发重派发，排队的剧集在下一次重派发时提交。
+   - 没有网络状态变化的触发。任一追踪账号进入已登录状态时立即重派发。
 3. **备份边界**：
    - 备份只导出设置和非机密的媒体匹配关联（ID 映射）；追踪账号 token 与凭据不导出，但应用设置类别包含 Animeko 会话数据。
    - 备份不包含下载的离线视频或完整历史数据库。

@@ -41,6 +41,8 @@ class AndroidTrackingCredentialStore(
     private val mutex = Mutex()
     private val keyAlias = "animeko.tracking.${providerId.value}"
     private val file = AtomicFile(context.noBackupFilesDir.resolve("tracking-${providerId.value}.credentials"))
+    /** Presence-only marker for a deliberate sign-out; kept beside the ciphertext, out of backups. */
+    private val signedOutMarker = context.noBackupFilesDir.resolve("tracking-${providerId.value}.signed-out")
 
     /**
      * Returns `null` when the credentials cannot be read. The file is deleted only when [isDefinitelyLost]
@@ -99,6 +101,14 @@ class AndroidTrackingCredentialStore(
     override suspend fun clear() = mutex.withLock {
         file.delete()
         deleteKey()
+    }
+
+    override suspend fun isSignedOutByUser(): Boolean = mutex.withLock { signedOutMarker.exists() }
+
+    override suspend fun setSignedOutByUser(value: Boolean) {
+        mutex.withLock {
+            if (value) signedOutMarker.createNewFile() else signedOutMarker.delete()
+        }
     }
 
     /** Best effort: a missing or unavailable key must not block sign-out. */

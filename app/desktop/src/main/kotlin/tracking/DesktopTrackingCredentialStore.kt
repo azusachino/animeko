@@ -28,6 +28,7 @@ class DesktopTrackingCredentialStore(
     providerId: TrackingProviderId,
 ) : TrackingCredentialStore {
     private val credentialKey = "credential:${providerId.value}"
+    private val signedOutByUserKey = "signed-out-by-user:${providerId.value}"
 
     override suspend fun load(): TrackingLoginCredentials? =
         dataStore.data.first()[credentialKey]?.let { TrackingLoginCredentials(secret = it) }
@@ -38,6 +39,12 @@ class DesktopTrackingCredentialStore(
 
     override suspend fun clear() {
         dataStore.updateData { it - credentialKey }
+    }
+
+    override suspend fun isSignedOutByUser(): Boolean = dataStore.data.first()[signedOutByUserKey] == "true"
+
+    override suspend fun setSignedOutByUser(value: Boolean) {
+        dataStore.updateData { if (value) it + (signedOutByUserKey to "true") else it - signedOutByUserKey }
     }
 }
 

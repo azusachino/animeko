@@ -43,6 +43,12 @@ interface TrackingProvider {
     /** Clears both the remote-client session and the injected secure credential store. */
     suspend fun logout()
 
+    /**
+     * Whether the user signed out on purpose and has not signed in since. A session that the remote service
+     * rejected is not a deliberate sign-out. Providers without a credential store never sign out on purpose.
+     */
+    suspend fun isSignedOutByUser(): Boolean = false
+
     suspend fun search(query: String): List<TrackingMedia>
 
     /** Reads current remote state before Animeko asks the user how to reconcile a binding. */
@@ -126,6 +132,13 @@ interface TrackingCredentialStore {
     suspend fun load(): TrackingLoginCredentials?
     suspend fun save(credentials: TrackingLoginCredentials)
     suspend fun clear()
+
+    /**
+     * Non-secret flag recording a deliberate sign-out. It survives restarts and is independent of [clear], which
+     * only removes the credentials. Implementations must persist it, not keep it in memory.
+     */
+    suspend fun isSignedOutByUser(): Boolean
+    suspend fun setSignedOutByUser(value: Boolean)
 }
 
 data class TrackingStatusOption(

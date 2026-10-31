@@ -43,6 +43,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -613,6 +614,92 @@ class AniListTrackingProviderTest {
     }
 
     @Test
+    fun logoutSetsSignedOutByUserFlag() = runTest {
+        val store = InMemoryCredentialStore()
+        val provider = provider(store) { error("logout makes no request") }
+
+        provider.logout()
+
+        assertTrue(provider.isSignedOutByUser())
+        assertTrue(store.isSignedOutByUser())
+    }
+
+    @Test
+    fun successfulLoginClearsSignedOutByUserFlag() = runTest {
+        val provider = provider {
+            respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+        }
+        provider.logout()
+
+        provider.login(TrackingLoginCredentials(secret = "new-token"))
+
+        assertFalse(provider.isSignedOutByUser())
+    }
+
+    @Test
+    fun failedLoginKeepsSignedOutByUserFlag() = runTest {
+        val provider = provider {
+            respondJson("""{"errors":[{"message":"Invalid token","status":400}]}""", HttpStatusCode.BadRequest)
+        }
+        provider.logout()
+
+        assertFailsWith<TrackingProviderException.Unauthorized> {
+            provider.login(TrackingLoginCredentials(secret = "bad-token"))
+        }
+
+        assertTrue(provider.isSignedOutByUser())
+    }
+
+    @Test
+    fun serverRejectionDuringRefreshDoesNotSetSignedOutByUserFlag() = runTest {
+        val store = InMemoryCredentialStore()
+        val time = FakeTimeSource()
+        var calls = 0
+        val provider = provider(store, time) {
+            calls++
+            if (calls == 1) {
+                respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+            } else {
+                respondJson("""{"errors":[{"message":"Invalid token","status":400}]}""", HttpStatusCode.BadRequest)
+            }
+        }
+        provider.refreshAccount()
+        time.now += 6.minutes
+
+        assertFailsWith<TrackingProviderException.Unauthorized> { provider.refreshAccount() }
+
+        assertNull(store.load())
+        assertFalse(provider.isSignedOutByUser())
+        assertFalse(store.isSignedOutByUser())
+    }
+
+    @Test
+    fun logoutClearsFailedValidationThrottle() = runTest {
+        var calls = 0
+        val time = FakeTimeSource()
+        val provider = provider(time = time) {
+            calls++
+            if (calls == 1) {
+                respondJson("""{"errors":[{"message":"Internal error","status":500}]}""", HttpStatusCode.InternalServerError)
+            } else {
+                respondJson("""{"data":{"Viewer":{"id":123,"name":"haru","mediaListOptions":{"scoreFormat":"POINT_100"}}}}""")
+            }
+        }
+        assertFailsWith<TrackingProviderException.Remote> { provider.refreshAccount() }
+        time.now += 1.minutes
+
+        provider.logout()
+        // Logout drops the stored failure, so the missing credentials are reported before any request.
+        assertFailsWith<TrackingProviderException.Unauthorized> { provider.refreshAccount() }
+        assertEquals(1, calls)
+
+        provider.login(TrackingLoginCredentials(secret = "new-token"))
+
+        assertEquals(2, calls)
+        assertTrue(provider.accountState.value is TrackingAccountState.LoggedIn)
+    }
+
+    @Test
     fun loginAfterFailedValidationHitsNetworkAndResetsThrottle() = runTest {
         var calls = 0
         val time = FakeTimeSource()
@@ -688,6 +775,7 @@ private class FakeTimeSource : TimeSource {
 private class InMemoryCredentialStore(
     private var credentials: TrackingLoginCredentials? = TrackingLoginCredentials(secret = "token"),
 ) : TrackingCredentialStore {
+    private var signedOutByUser = false
 
     override suspend fun load() = credentials
 
@@ -697,5 +785,11 @@ private class InMemoryCredentialStore(
 
     override suspend fun clear() {
         credentials = null
+    }
+
+    override suspend fun isSignedOutByUser(): Boolean = signedOutByUser
+
+    override suspend fun setSignedOutByUser(value: Boolean) {
+        signedOutByUser = value
     }
 }

@@ -17,6 +17,7 @@ class IosTrackingCredentialStore(
     private val userDefaults: NSUserDefaults = NSUserDefaults.standardUserDefaults,
 ) : TrackingCredentialStore {
     private val credentialKey = "tracking-credential:${providerId.value}"
+    private val signedOutByUserKey = "tracking-signed-out-by-user:${providerId.value}"
 
     override suspend fun load(): TrackingLoginCredentials? {
         val secret = userDefaults.stringForKey(credentialKey) ?: return null
@@ -29,5 +30,11 @@ class IosTrackingCredentialStore(
 
     override suspend fun clear() {
         userDefaults.removeObjectForKey(credentialKey)
+    }
+
+    override suspend fun isSignedOutByUser(): Boolean = userDefaults.boolForKey(signedOutByUserKey)
+
+    override suspend fun setSignedOutByUser(value: Boolean) {
+        userDefaults.setBool(value, forKey = signedOutByUserKey)
     }
 }

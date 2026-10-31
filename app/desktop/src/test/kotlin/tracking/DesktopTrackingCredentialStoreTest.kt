@@ -14,7 +14,9 @@ import java.nio.file.attribute.PosixFilePermission
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import me.him188.ani.app.data.persistent.MemoryDataStore
 import me.him188.ani.tracking.api.TrackingLoginCredentials
 import me.him188.ani.tracking.api.TrackingProviderId
@@ -55,5 +57,23 @@ class DesktopTrackingCredentialStoreTest {
         aniList.clear()
         assertNull(aniList.load())
         assertEquals("synthetic-other", other.load()?.secret)
+    }
+
+    @Test
+    fun signedOutFlagIsPerProviderAndIndependentOfCredentials() = runBlocking {
+        val dataStore = MemoryDataStore(emptyMap<String, String>())
+        val aniList = DesktopTrackingCredentialStore(dataStore, TrackingProviderId("anilist"))
+        val other = DesktopTrackingCredentialStore(dataStore, TrackingProviderId("other"))
+
+        assertFalse(aniList.isSignedOutByUser())
+        aniList.setSignedOutByUser(true)
+        assertTrue(aniList.isSignedOutByUser())
+        assertFalse(other.isSignedOutByUser())
+
+        aniList.clear()
+        assertTrue(aniList.isSignedOutByUser())
+
+        aniList.setSignedOutByUser(false)
+        assertFalse(aniList.isSignedOutByUser())
     }
 }

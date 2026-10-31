@@ -81,6 +81,7 @@ class AniListTrackingProvider(
         call {
             val viewer = api.viewer(credentials.secret)
             credentialStore.save(credentials)
+            credentialStore.setSignedOutByUser(false)
             cachedToken = credentials.secret
             viewer.applyToAccountState()
         }
@@ -113,8 +114,14 @@ class AniListTrackingProvider(
         }
     }
 
-    override suspend fun logout(): Unit = accountMutex.withLock { logoutLocked() }
+    override suspend fun logout(): Unit = accountMutex.withLock {
+        logoutLocked()
+        credentialStore.setSignedOutByUser(true)
+    }
 
+    override suspend fun isSignedOutByUser(): Boolean = credentialStore.isSignedOutByUser()
+
+    /** Clears the session after a rejection or a deliberate logout; the caller decides whether it was deliberate. */
     private suspend fun logoutLocked() {
         credentialStore.clear()
         cachedToken = null
