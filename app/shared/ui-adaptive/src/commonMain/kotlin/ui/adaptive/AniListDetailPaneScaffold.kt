@@ -136,11 +136,19 @@ fun <T> AniListDetailPaneScaffold(
     },
     scaffoldValue: ThreePaneScaffoldValue = navigator.scaffoldValue,
     layoutParameters: ListDetailLayoutParameters = ListDetailLayoutParameters.calculate(navigator.scaffoldDirective),
+    /**
+     * 系统返回时调用, 替代默认的 `navigator.navigateBack()`. 为 `null` 时使用默认行为.
+     */
+    onSystemBack: (() -> Unit)? = null,
 ) {
     val coroutineScope = rememberCoroutineScope()
     BackHandler(navigator.canNavigateBack()) {
-        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) { // start immediately to change state
-            navigator.navigateBack()
+        if (onSystemBack != null) {
+            onSystemBack()
+        } else {
+            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) { // start immediately to change state
+                navigator.navigateBack()
+            }
         }
     }
     val layoutParametersState by rememberUpdatedState(layoutParameters)

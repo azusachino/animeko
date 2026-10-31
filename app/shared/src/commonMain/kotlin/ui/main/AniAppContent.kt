@@ -434,6 +434,9 @@ private fun AniAppContentImpl(
                             },
                         )
                     },
+                    onNavigateBack = {
+                        aniNavigator.popBackStack(route, inclusive = true)
+                    },
                 )
             }
             entry<NavRoutes.PlaybackHistory> { route ->

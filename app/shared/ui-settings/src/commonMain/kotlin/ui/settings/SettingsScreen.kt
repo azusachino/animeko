@@ -57,6 +57,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldDestinationItem
+import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.BackNavigationBehavior
 import androidx.compose.material3.adaptive.navigation.ThreePaneScaffoldNavigator
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
@@ -188,6 +189,10 @@ fun SettingsScreen(
      * 调试页「打开播放流程悬浮窗」. 悬浮窗由宿主在页面之上显示.
      */
     onOpenPlayFlowDebugWindow: () -> Unit = {},
+    /**
+     * 返回上一个 app 页面 (弹出设置页路由). 设置页直接打开到某个 tab 时, 单页模式下从该 tab 返回会调用它.
+     */
+    onNavigateBack: (() -> Unit)? = null,
 ) {
     val navigator: ThreePaneScaffoldNavigator<Nothing?> = rememberListDetailPaneScaffoldNavigator(
         initialDestinationHistory = buildList {
@@ -200,6 +205,9 @@ fun SettingsScreen(
     val layoutParameters = ListDetailLayoutParameters.calculate(navigator.scaffoldDirective)
     var lastSelectedTab by rememberSaveable(initialTab) {
         mutableStateOf(initialTab)
+    }
+    var openedDirectlyOnTab by rememberSaveable(initialTab) {
+        mutableStateOf(initialTab != null)
     }
     val mediaSourceSelectionState = rememberMediaSourceSelectionState()
 
@@ -218,10 +226,20 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     fun navigateToTab(tab: SettingsTab) {
+        openedDirectlyOnTab = false
         coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
             navigator.navigateTo(ListDetailPaneScaffoldRole.Detail)
             lastSelectedTab = tab
         }
+    }
+
+    // 直接打开到某个 tab 时, 在该 tab 的详情页返回应回到打开设置页之前的页面, 而不是设置列表.
+    val appBackOnDetailPane: (() -> Unit)? = onNavigateBack?.takeIf {
+        shouldPopAppRouteOnBack(
+            openedDirectlyOnTab = openedDirectlyOnTab,
+            isSinglePane = layoutParameters.preferSinglePane,
+            currentRole = navigator.currentDestination?.pane,
+        )
     }
 
     SettingsPageLayout(
@@ -239,6 +257,8 @@ fun SettingsScreen(
         onClickBackOnDetailPage = {
             if (mediaSourceSelectionState.inSelection) {
                 mediaSourceSelectionState.clear()
+            } else if (appBackOnDetailPane != null) {
+                appBackOnDetailPane()
             } else {
                 coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
                     navigator.navigateBack(BackNavigationBehavior.PopUntilScaffoldValueChange)
@@ -470,7 +490,21 @@ fun SettingsScreen(
         navigationIcon = navigationIcon,
         layoutParameters = layoutParameters,
         loadOpenSourceLibrariesJsons = loadOpenSourceLibrariesJsons,
+        onSystemBack = appBackOnDetailPane,
     )
+}
+
+/**
+ * 设置页直接打开到某个 tab 且为单页模式, 仍停留在该 tab 详情页时, 返回应弹出 app 路由 (回到打开设置页之前的页面).
+ *
+ * 其余情况 (双页, 未直接打开到 tab, 已进入设置列表等) 返回 `false`, 使用设置页内部的返回行为.
+ */
+internal fun shouldPopAppRouteOnBack(
+    openedDirectlyOnTab: Boolean,
+    isSinglePane: Boolean,
+    currentRole: ThreePaneScaffoldRole?,
+): Boolean {
+    return openedDirectlyOnTab && isSinglePane && currentRole == ListDetailPaneScaffoldRole.Detail
 }
 
 @Composable
@@ -494,6 +528,7 @@ internal fun SettingsPageLayout(
     layoutParameters: ListDetailLayoutParameters = ListDetailLayoutParameters.calculate(navigator.scaffoldDirective),
     navigationIcon: @Composable () -> Unit = {},
     loadOpenSourceLibrariesJsons: suspend () -> List<ByteArray>,
+    onSystemBack: (() -> Unit)? = null,
 ) = SettingsPageSurface(containerColor) {
     val layoutParametersState by rememberUpdatedState(layoutParameters)
 
@@ -957,6 +992,7 @@ internal fun SettingsPageLayout(
         modifier,
         layoutParameters = layoutParameters,
         contentWindowInsets = contentWindowInsets,
+        onSystemBack = onSystemBack,
     )
 }
 
