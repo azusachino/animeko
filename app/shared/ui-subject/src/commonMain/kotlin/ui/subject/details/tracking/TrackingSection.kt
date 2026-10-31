@@ -255,7 +255,7 @@ private fun TrackingSectionContent(subjectId: Int, modifier: Modifier) {
                             error = null
                             runSearch()
                         },
-                        onRefresh = { coordinator.refresh() },
+                        onRefresh = { coordinator.refresh(subjectId) },
                         onAdd = { mediaId ->
                             scope.launch {
                                 busy = card.providerId

@@ -9,11 +9,19 @@
 
 package me.him188.ani.app.ui.subject.details.tracking
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 import me.him188.ani.tracking.api.DefaultTrackingRegistry
 import me.him188.ani.tracking.api.TrackingAccount
 import me.him188.ani.tracking.api.TrackingAccountState
@@ -68,6 +76,40 @@ class TrackingCoordinatorTest {
     }
 
     @Test
+    fun editBindAndUnlinkDoNotRestartObservers() = runTest {
+        val source = FakeSource("anilist")
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)))
+        val providerId = TrackingProviderId("anilist")
+        backgroundScope.launch { coordinator.observe(42).collect {} }
+        runCurrent()
+        assertEquals(1, source.observeCalls.value)
+
+        coordinator.edit(42, providerId, TrackingEdit.Status(TrackingStatus.COMPLETED))
+        coordinator.bind(42, providerId, TrackingMediaId("42"))
+        coordinator.unlink(42, providerId)
+        advanceUntilIdle()
+        // A restart would first join the cancelled flowOn(IO) collection in real time, so give it a chance to run.
+        withContext(Dispatchers.Default) { delay(200.milliseconds) }
+        advanceUntilIdle()
+
+        assertEquals(1, source.observeCalls.value)
+    }
+
+    @Test
+    fun manualRefreshInvalidatesTheSubjectAndRestartsObservers() = runTest {
+        val source = FakeSource("anilist")
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)))
+        backgroundScope.launch { coordinator.observe(42).collect {} }
+        runCurrent()
+
+        coordinator.refresh(42)
+        // The restart waits for the cancelled flowOn(IO) collection in real time, so await the new observe call.
+        source.observeCalls.first { it == 2 }
+
+        assertEquals(listOf(42), source.invalidatedSubjects)
+    }
+
+    @Test
     fun registryBacksUpBindingsAcrossSources() = runTest {
         val first = FakeSource("first")
         val second = FakeSource("second")
@@ -115,15 +157,21 @@ class TrackingCoordinatorTest {
         override val statusOptions = listOf(TrackingStatusOption(TrackingStatus.CURRENT, "Watching"))
         override val scoreOptions = emptyList<TrackingScoreOption>()
         var lastEdit: TrackingEdit? = null
+        val observeCalls = MutableStateFlow(0)
+        val invalidatedSubjects = mutableListOf<Int>()
         private var bindings = emptyList<TrackingBindingRecord>()
         private val snapshot = TrackingSnapshot(
             TrackingMedia(TrackingMediaId("42"), "Test", "https://example.org/42", null, 12),
             TrackingListEntry(TrackingMediaId("42"), TrackingStatus.CURRENT, 1),
         )
 
-        override fun observe(subjectId: Int): Flow<TrackingSnapshot?> = observeFailure?.let { failure ->
-            flow { throw failure }
-        } ?: flowOf(snapshot)
+        override fun invalidate(subjectId: Int) {
+            invalidatedSubjects += subjectId
+        }
+        override fun observe(subjectId: Int): Flow<TrackingSnapshot?> {
+            observeCalls.value++
+            return observeFailure?.let { failure -> flow { throw failure } } ?: flowOf(snapshot)
+        }
         override suspend fun bind(subjectId: Int, mediaId: TrackingMediaId): TrackingSnapshot = snapshot
         override suspend fun edit(subjectId: Int, edit: TrackingEdit): TrackingSnapshot {
             lastEdit = edit

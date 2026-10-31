@@ -25,6 +25,9 @@ interface TrackingSource : TrackingBindingBackup {
     /** Emits local changes as well as the initial remote state. Null means no media match. */
     fun observe(subjectId: Int): Flow<TrackingSnapshot?>
 
+    /** Drops any cached remote read for [subjectId]; the next [observe] reads it again. */
+    fun invalidate(subjectId: Int) {}
+
     /** Empty for a source whose media ID is the Animeko subject ID. */
     suspend fun search(query: String): List<TrackingMedia> = emptyList()
 

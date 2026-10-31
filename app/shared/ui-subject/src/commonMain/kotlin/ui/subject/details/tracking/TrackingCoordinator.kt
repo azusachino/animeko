@@ -10,15 +10,20 @@
 package me.him188.ani.app.ui.subject.details.tracking
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.tracking.api.TrackingAccountState
 import me.him188.ani.tracking.api.TrackingEdit
 import me.him188.ani.tracking.api.TrackingMedia
@@ -70,6 +75,7 @@ class TrackingCoordinator(private val registry: TrackingRegistry) {
                 source.presentation,
                 refreshes.flatMapLatest { generation ->
                     val snapshots = source.observe(subjectId)
+                        .flowOn(Dispatchers.IO_)
                         .map<TrackingSnapshot?, TrackingLoad> { TrackingLoad.Ready(it) }
                         .catch { failure ->
                             if (failure is CancellationException) throw failure
@@ -92,22 +98,24 @@ class TrackingCoordinator(private val registry: TrackingRegistry) {
     suspend fun search(providerId: TrackingProviderId, query: String): List<TrackingMedia> =
         source(providerId).search(query)
 
+    // Writes run to completion even if the screen leaves mid-edit; sources publish the result to their observers.
     suspend fun bind(subjectId: Int, providerId: TrackingProviderId, mediaId: TrackingMediaId) {
-        source(providerId).bind(subjectId, mediaId)
-        refresh()
+        withContext(NonCancellable) { source(providerId).bind(subjectId, mediaId) }
     }
 
     suspend fun edit(subjectId: Int, providerId: TrackingProviderId, edit: TrackingEdit) {
-        source(providerId).edit(subjectId, edit)
-        refresh()
+        withContext(NonCancellable) { source(providerId).edit(subjectId, edit) }
     }
 
     suspend fun unlink(subjectId: Int, providerId: TrackingProviderId) {
-        source(providerId).unlink(subjectId)
-        refresh()
+        withContext(NonCancellable) { source(providerId).unlink(subjectId) }
     }
 
-    fun refresh() { refreshes.value += 1 }
+    /** Manual refresh only: drops every source's cached read of [subjectId] and restarts the observers. */
+    fun refresh(subjectId: Int) {
+        registry.sources.forEach { it.invalidate(subjectId) }
+        refreshes.value += 1
+    }
 
     private fun source(id: TrackingProviderId): TrackingSource =
         registry.sources.first { it.info.id == id }
