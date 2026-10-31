@@ -79,7 +79,6 @@ import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.preferredDisplayName
 import me.him188.ani.app.domain.usecase.GlobalKoin
 import me.him188.ani.app.navigation.LocalNavigator
-import me.him188.ani.app.navigation.SettingsTab
 import me.him188.ani.app.ui.foundation.icons.TrackingIconRegistry
 import me.him188.ani.app.ui.foundation.tracking.TrackingAccountConnector
 import me.him188.ani.app.ui.foundation.tracking.TrackingAccountRegistry
@@ -285,9 +284,6 @@ private fun TrackingSectionContent(subjectId: Int, modifier: Modifier) {
                             }
                         }
                     }
-                TextButton(onClick = { showSheet = false; navigator.navigateSettings(SettingsTab.TRACKING) }) {
-                    Text(stringResource(Lang.tracking_manage_accounts))
-                }
                 error?.let { TrackingErrorMessage(it) }
             }
         }
