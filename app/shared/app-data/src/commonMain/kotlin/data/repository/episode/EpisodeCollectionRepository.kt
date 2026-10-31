@@ -35,6 +35,7 @@ import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.EpisodeType
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
+import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.warn
 import me.him188.ani.utils.platform.currentTimeMillis
 import me.him188.ani.utils.serialization.BigNum
@@ -238,6 +239,10 @@ class EpisodeCollectionRepository(
             ),
         )
         onDirtyChanged()
+        if (collectionType == UnifiedCollectionType.DONE) {
+            logger.info { "[tracking-sync] notify onEpisodeWatched: trackingSync present=${trackingSync != null}" }
+            trackingSync?.onEpisodeWatched(subjectId, episodeId)
+        }
     }
 
     override val pendingOpsFlow: Flow<List<EpisodeCollectionPendingOp>> = pendingOpDao.pendingOpsFlow().map { ops ->

@@ -47,18 +47,13 @@ class SetEpisodeCollectionTypeUseCaseImpl(
     koin: Koin,
 ) : SetEpisodeCollectionTypeUseCase {
     private val episodeCollectionRepository: EpisodeCollectionRepository by koin.inject()
-    private val trackingSync: EpisodeTrackingSync? by lazy { koin.getOrNull() }
     private val logger = logger<SetEpisodeCollectionTypeUseCaseImpl>()
 
     override suspend fun invoke(subjectId: Int, episodeId: Int, collectionType: UnifiedCollectionType) {
         withContext(Dispatchers.Default) {
             logger.info { "[tracking-sync] set collection subjectId=$subjectId episodeId=$episodeId type=$collectionType" }
-            // Persist locally and enqueue server sync before notifying AniList.
+            // The repository persists locally, enqueues server sync, then notifies tracking sync.
             episodeCollectionRepository.setEpisodeCollectionType(subjectId, episodeId, collectionType)
-            if (collectionType == UnifiedCollectionType.DONE) {
-                logger.info { "[tracking-sync] notify onEpisodeWatched: trackingSync present=${trackingSync != null}" }
-                trackingSync?.onEpisodeWatched(subjectId, episodeId)
-            }
         }
     }
 }

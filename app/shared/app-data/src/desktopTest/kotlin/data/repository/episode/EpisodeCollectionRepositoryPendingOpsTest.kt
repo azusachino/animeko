@@ -23,6 +23,7 @@ import me.him188.ani.app.data.persistent.database.dao.EpisodeCollectionEntity
 import me.him188.ani.app.data.persistent.database.dao.SubjectCollectionEntity
 import me.him188.ani.app.data.repository.subject.GetEpisodeTypeFiltersUseCase
 import me.him188.ani.app.domain.episode.EpisodeTrackingSync
+import me.him188.ani.app.domain.episode.SetEpisodeCollectionTypeUseCaseImpl
 import me.him188.ani.client.apis.ScheduleAniApi
 import me.him188.ani.client.apis.SubjectsAniApi
 import me.him188.ani.datasources.api.EpisodeSort
@@ -30,6 +31,8 @@ import me.him188.ani.datasources.api.EpisodeType
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
 import me.him188.ani.utils.ktor.ApiInvoker
+import org.koin.core.Koin
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -96,6 +99,46 @@ class EpisodeCollectionRepositoryPendingOpsTest {
         assertEquals(listOf(11 to UnifiedCollectionType.WISH, 12 to UnifiedCollectionType.DONE), ops.map { it.episodeId to it.collectionType })
         assertTrue(ops.all { it.subjectId == 1 && it.updatedAtMillis == 1_000L })
         assertEquals(3, dirtyCalls())
+    }
+
+    @Test
+    fun `setEpisodeCollectionType notifies tracking sync once when marked done`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(trackingSync = { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId }) {
+            seed(1, listOf(11, 12))
+
+            repository.setEpisodeCollectionType(1, 11, UnifiedCollectionType.DONE)
+
+            assertEquals(listOf(1 to 11), trackedEpisodes)
+        }
+    }
+
+    @Test
+    fun `setEpisodeCollectionType does not notify tracking sync when not done`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(trackingSync = { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId }) {
+            seed(1, listOf(11, 12), UnifiedCollectionType.DONE)
+
+            repository.setEpisodeCollectionType(1, 11, UnifiedCollectionType.WISH)
+            repository.setEpisodeCollectionType(1, 12, UnifiedCollectionType.NOT_COLLECTED)
+
+            assertEquals(emptyList(), trackedEpisodes)
+        }
+    }
+
+    @Test
+    fun `use case notifies tracking sync exactly once through the repository`() {
+        val trackedEpisodes = mutableListOf<Pair<Int, Int>>()
+        runRepositoryTest(trackingSync = { subjectId, episodeId -> trackedEpisodes += subjectId to episodeId }) {
+            seed(1, listOf(11))
+            val koin = Koin()
+            koin.loadModules(listOf(module { single<EpisodeCollectionRepository> { repository } }))
+
+            SetEpisodeCollectionTypeUseCaseImpl(koin).invoke(1, 11, UnifiedCollectionType.DONE)
+
+            assertEquals(UnifiedCollectionType.DONE, localType(11))
+            assertEquals(listOf(1 to 11), trackedEpisodes)
+        }
     }
 
     @Test
