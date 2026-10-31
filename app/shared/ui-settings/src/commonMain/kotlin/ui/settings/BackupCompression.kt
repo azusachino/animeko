@@ -9,7 +9,9 @@
 
 package me.him188.ani.app.ui.settings
 
+import kotlinx.io.Buffer
 import kotlinx.io.Source
+import kotlinx.io.readByteArray
 
 /** Maximum size of expanded or plain-text backup contents. */
 internal const val MAX_BACKUP_BYTES = 32 * 1024 * 1024
@@ -22,16 +24,14 @@ internal expect fun compressBackup(content: ByteArray): ByteArray
 /** Reads at most [maxBytes] plus one byte, so oversized sources are rejected without unbounded allocation. */
 internal fun readBackupBytes(source: Source, maxBytes: Int = MAX_BACKUP_FILE_BYTES): ByteArray {
     require(maxBytes in 0 until Int.MAX_VALUE)
-    val bytes = ByteArray(maxBytes + 1)
-    var count = 0
-    while (count < bytes.size) {
-        val read = source.readAtMostTo(bytes, count, bytes.size)
-        if (read == -1) break
+    val buffer = Buffer()
+    while (buffer.size <= maxBytes) {
+        val read = source.readAtMostTo(buffer, maxBytes + 1L - buffer.size)
+        if (read == -1L) break
         check(read > 0) { "Backup source made no progress" }
-        count += read
     }
-    require(count <= maxBytes) { "Backup file exceeds $maxBytes bytes" }
-    return bytes.copyOf(count)
+    require(buffer.size <= maxBytes) { "Backup file exceeds $maxBytes bytes" }
+    return buffer.readByteArray()
 }
 
 /** Rejects oversized plain-text and decompressed backups before parsing them. */

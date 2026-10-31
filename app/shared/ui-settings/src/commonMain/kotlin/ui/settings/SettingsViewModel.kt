@@ -20,9 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import me.him188.ani.app.data.models.danmaku.DanmakuConfigSerializer
 import me.him188.ani.app.data.models.danmaku.DanmakuFilterConfig
 import me.him188.ani.app.data.models.danmaku.DanmakuRegexFilter
@@ -380,10 +378,9 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
                 TrackingBindingSave(it.providerId, it.accountId, it.subjectId, it.mediaId)
             },
         ) else null
-        val content = json.encodeToString(AnimekoBackupFile.serializer(), AnimekoBackupFile(
-            settings = settings.takeIf { selection.settings },
-            tracking = tracking,
-        ))
+        // Settings stay flat at the top level so builds that predate `tracking` still restore them;
+        // they ignore the unknown key (ignoreUnknownKeys = true).
+        val content = json.encodeToString(SettingsBackup.serializer(), settings.copy(tracking = tracking))
         requireBackupTextSize(content)
         return content
     }
@@ -391,16 +388,8 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
     @Suppress("DuplicatedCode")
     private suspend fun restoreSettingsBackup(content: String): Boolean {
         requireBackupTextSize(content)
-        val fields = json.parseToJsonElement(content).jsonObject
-        val file = if ("format" in fields) {
-            require("version" in fields) { "Backup schema version is missing" }
-            json.decodeFromString(AnimekoBackupFile.serializer(), content)
-        } else {
-            AnimekoBackupFile(settings = json.decodeFromString(SettingsBackup.serializer(), content))
-        }
-        require(file.format == "animeko-backup" && file.version == 1) { "Unsupported backup format" }
-        val backup = file.settings ?: SettingsBackup()
-        val savedBindings = file.tracking?.bindings ?: backup.trackingBindings
+        val backup = json.decodeFromJsonElement(SettingsBackup.serializer(), json.parseToJsonElement(content))
+        val savedBindings = backup.tracking?.bindings
         val bindingBackup = getKoin().getOrNull<TrackingBindingBackup>()
         require(savedBindings.isNullOrEmpty() || bindingBackup != null) { "Tracking backup is unavailable" }
         savedBindings?.let { saved ->
@@ -446,16 +435,6 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
         return true
     }
 }
-
-@Serializable
-private data class AnimekoBackupFile(
-    @EncodeDefault
-    val format: String = "animeko-backup",
-    @EncodeDefault
-    val version: Int = 1,
-    val settings: SettingsBackup? = null,
-    val tracking: TrackingBackupSection? = null,
-)
 
 @Serializable
 private data class TrackingBackupSection(val bindings: List<TrackingBindingSave>)
@@ -506,7 +485,7 @@ private data class SettingsBackup(
     val pikpakConfig: PikPakConfig? = null,
     val notificationSettings: NotificationSettings? = null,
     val tokenStore: TokenSave? = null,
-    val trackingBindings: List<TrackingBindingSave>? = null,
+    val tracking: TrackingBackupSection? = null,
 )
 
 @Serializable

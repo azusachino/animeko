@@ -25,7 +25,7 @@ class BackupCompressionTest {
 
     @Test
     fun compressedBackupRoundTrips() {
-        val content = """{"format":"animeko-backup","version":1,"tracking":{"bindings":[]}}""".encodeToByteArray()
+        val content = """{"danmakuEnabled":true,"tracking":{"bindings":[]}}""".encodeToByteArray()
         val compressed = compressBackup(content)
 
         assertEquals(0x1f.toByte(), compressed[0])
@@ -53,6 +53,21 @@ class BackupCompressionTest {
         val oversized = source(byteArrayOf(1, 2, 3, 4, 5, 6))
         assertFails { readBackupBytes(oversized, maxBytes = 3) }
         assertEquals(2L, oversized.size)
+    }
+
+    @Test
+    fun boundedBackupReadKeepsSmallSourcesExactWithoutMaxSizeAllocation() {
+        val content = byteArrayOf(9, 8, 7)
+        val source = Buffer().apply { write(content, 0, content.size) }
+
+        // A max-size buffer for Int.MAX_VALUE - 1 bytes would exhaust memory; reading must stay proportional to input.
+        assertContentEquals(content, readBackupBytes(source, maxBytes = Int.MAX_VALUE - 1))
+    }
+
+    @Test
+    fun boundedBackupReadRejectsMultiChunkOversizedSource() {
+        val oversized = Buffer().apply { write(Random(7).nextBytes(100_000), 0, 100_000) }
+        assertFails { readBackupBytes(oversized, maxBytes = 1_000) }
     }
 
     @Test
