@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import me.him188.ani.app.data.models.subject.SubjectInfo
+import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.tracking.api.TrackingAccountState
 import me.him188.ani.tracking.api.TrackingEdit
@@ -64,8 +66,15 @@ internal fun retryAfterSeconds(millis: Long): Int {
     return seconds.coerceAtLeast(1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 }
 
-class TrackingCoordinator(private val registry: TrackingRegistry) {
+class TrackingCoordinator(
+    private val registry: TrackingRegistry,
+    private val subjectCollectionRepository: SubjectCollectionRepository,
+) {
     private val refreshes = MutableStateFlow(0)
+
+    /** Subject info of [subjectId] from the collection cache; re-emits when the collection changes. */
+    fun subjectInfo(subjectId: Int): Flow<SubjectInfo> =
+        subjectCollectionRepository.subjectCollectionFlow(subjectId).map { it.subjectInfo }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observe(subjectId: Int): Flow<List<TrackingCardModel>> {

@@ -68,13 +68,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
-import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.preferredDisplayName
 import me.him188.ani.app.domain.usecase.GlobalKoin
@@ -166,10 +164,8 @@ private fun TrackingSectionContent(subjectId: Int, modifier: Modifier) {
     val accountConnectors = remember { GlobalKoin.get<TrackingAccountRegistry>().connectors }
     val cards by remember(coordinator, subjectId) { coordinator.observe(subjectId) }
         .collectAsStateWithLifecycle(emptyList())
-    val titleRepository = remember { GlobalKoin.get<SubjectCollectionRepository>() }
-    val subjectInfo by remember(subjectId) {
-        titleRepository.subjectCollectionFlow(subjectId).map { it.subjectInfo }
-    }.collectAsStateWithLifecycle(null as SubjectInfo?)
+    val subjectInfo by remember(coordinator, subjectId) { coordinator.subjectInfo(subjectId) }
+        .collectAsStateWithLifecycle(null as SubjectInfo?)
     val useOriginalTitle = LocalSubjectAppearanceSettings.current.useOriginalTitle
     val preferredTitle = subjectInfo?.preferredDisplayName(useOriginalTitle).orEmpty()
     val originalTitle = subjectInfo?.name.orEmpty()

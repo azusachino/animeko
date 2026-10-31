@@ -9,6 +9,8 @@
 
 package me.him188.ani.app.ui.subject.details.tracking
 
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +24,14 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
+import me.him188.ani.app.data.models.bangumi.BangumiSyncState
+import me.him188.ani.app.data.models.subject.SubjectCollectionCounts
+import me.him188.ani.app.data.models.subject.SubjectCollectionInfo
+import me.him188.ani.app.data.models.subject.createTestSubjectCollection
+import me.him188.ani.app.data.repository.subject.CollectionsFilterQuery
+import me.him188.ani.app.data.repository.subject.OfflineSubjectDisplayInfo
+import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
+import me.him188.ani.datasources.api.topic.UnifiedCollectionType
 import me.him188.ani.tracking.api.DefaultTrackingRegistry
 import me.him188.ani.tracking.api.TrackingAccount
 import me.him188.ani.tracking.api.TrackingAccountState
@@ -47,10 +57,20 @@ import kotlin.test.assertTrue
 
 class TrackingCoordinatorTest {
     @Test
+    fun subjectInfoIsReadFromTheRequestedSubjectCollection() = runTest {
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(emptyList()), FakeSubjectCollectionRepository())
+
+        val info = coordinator.subjectInfo(43).first()
+
+        assertEquals(43, info.subjectId)
+        assertEquals("Subject Name", info.name)
+    }
+
+    @Test
     fun registeredThirdSourceUsesTheSameCardAndEditPath() = runTest {
         val sources = listOf(FakeSource("bangumi"), FakeSource("anilist"),
             FakeSource("third", TrackingSourceCapabilities(canEditScore = false)))
-        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(sources))
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(sources), FakeSubjectCollectionRepository())
 
         val cards = coordinator.observe(42).first { cards -> cards.size == 3 && cards.all { it.load is TrackingLoad.Ready } }
         assertEquals(listOf("bangumi", "anilist", "third"), cards.map { it.providerId.value })
@@ -67,7 +87,7 @@ class TrackingCoordinatorTest {
             connected = false,
             observeFailure = TrackingProviderException.RateLimited(15_100),
         )
-        val card = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)))
+        val card = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)), FakeSubjectCollectionRepository())
             .observe(42).first { it.single().load is TrackingLoad.RateLimited }.single()
 
         assertEquals(16, (card.load as TrackingLoad.RateLimited).retryAfterSeconds)
@@ -78,7 +98,7 @@ class TrackingCoordinatorTest {
     @Test
     fun editBindAndUnlinkDoNotRestartObservers() = runTest {
         val source = FakeSource("anilist")
-        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)))
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)), FakeSubjectCollectionRepository())
         val providerId = TrackingProviderId("anilist")
         backgroundScope.launch { coordinator.observe(42).collect {} }
         runCurrent()
@@ -98,7 +118,7 @@ class TrackingCoordinatorTest {
     @Test
     fun manualRefreshInvalidatesTheSubjectAndRestartsObservers() = runTest {
         val source = FakeSource("anilist")
-        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)))
+        val coordinator = TrackingCoordinator(DefaultTrackingRegistry(listOf(source)), FakeSubjectCollectionRepository())
         backgroundScope.launch { coordinator.observe(42).collect {} }
         runCurrent()
 
@@ -142,6 +162,44 @@ class TrackingCoordinatorTest {
         registry.restoreBindings(listOf(record))
 
         assertEquals(listOf(record), registry.exportBindings())
+    }
+
+    /** Only [subjectCollectionFlow] is used by the coordinator; the other members are unreachable here. */
+    private class FakeSubjectCollectionRepository : SubjectCollectionRepository() {
+        override fun subjectCollectionFlow(subjectId: Int): Flow<SubjectCollectionInfo> =
+            flowOf(createTestSubjectCollection(subjectId, emptyList(), UnifiedCollectionType.DOING))
+
+        override fun subjectCollectionCountsFlow(): Flow<SubjectCollectionCounts?> = throw UnsupportedOperationException()
+        override fun subjectCollectionsPager(
+            query: CollectionsFilterQuery,
+            pagingConfig: PagingConfig,
+        ): Flow<PagingData<SubjectCollectionInfo>> = throw UnsupportedOperationException()
+        override fun cachedValidSubjectIds(): Flow<List<Int>> = throw UnsupportedOperationException()
+        override suspend fun updateRecentlyUpdatedSubjectCollections(limit: Int, type: UnifiedCollectionType?, offset: Int) =
+            throw UnsupportedOperationException()
+        override fun mostRecentlyUpdatedSubjectCollectionsFlow(
+            limit: Int,
+            types: List<UnifiedCollectionType>?,
+        ): Flow<List<SubjectCollectionInfo>> = throw UnsupportedOperationException()
+        override suspend fun updateRating(
+            subjectId: Int,
+            score: Int?,
+            comment: String?,
+            tags: List<String>?,
+            isPrivate: Boolean?,
+        ) = throw UnsupportedOperationException()
+        override suspend fun setSubjectCollectionTypeOrDelete(subjectId: Int, type: UnifiedCollectionType?) =
+            throw UnsupportedOperationException()
+        override fun getSubjectCollectionTypeOffline(subjectId: Int): Flow<UnifiedCollectionType?> =
+            throw UnsupportedOperationException()
+        override fun getSubjectDisplayInfoOffline(subjectId: Int): Flow<OfflineSubjectDisplayInfo?> =
+            throw UnsupportedOperationException()
+        override suspend fun getSubjectNamesCnByCollectionType(types: List<UnifiedCollectionType>): Flow<List<String>> =
+            throw UnsupportedOperationException()
+        override suspend fun performBangumiFullSync() = throw UnsupportedOperationException()
+        override suspend fun getBangumiFullSyncState(): BangumiSyncState? = throw UnsupportedOperationException()
+        override suspend fun invalidateCache(subjectIds: List<Int>) = throw UnsupportedOperationException()
+        override suspend fun invalidateAllCaches() = throw UnsupportedOperationException()
     }
 
     private class FakeSource(

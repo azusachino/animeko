@@ -555,7 +555,7 @@ private fun KoinApplication.otherModules(
     single { TrackingAccountRegistry(listOf(get<BangumiTrackingAccountConnector>()) + getAll<TrackingAccountConnector>()) }
     single<TrackingRegistry> { DefaultTrackingRegistry(listOf(get<BangumiTrackingSource>()) + getAll<TrackingSource>()) }
     single<TrackingBindingBackup> { get<TrackingRegistry>() }
-    single { TrackingCoordinator(get()) }
+    single { TrackingCoordinator(get(), get()) }
     single {
         TrackingEpisodeSynchronizer(
             get(),
