@@ -12,6 +12,7 @@ import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -341,7 +342,7 @@ class AniListTrackingProviderTest {
 
     private fun provider(
         store: TrackingCredentialStore = InMemoryCredentialStore(),
-        handler: suspend MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> HttpResponseData,
+        handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
     ): AniListTrackingProvider {
         val client = HttpClient(MockEngine(handler)) {
             expectSuccess = true
