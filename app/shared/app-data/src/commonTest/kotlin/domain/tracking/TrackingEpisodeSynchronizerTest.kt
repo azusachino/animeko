@@ -167,7 +167,7 @@ class TrackingEpisodeSynchronizerTest {
         assertEquals(emptyMap(), store.entries())
         assertEquals(2, source.calls)
 
-        // The ended cycle no longer blocks scheduling: the next failure gets its own retry.
+        // A failure after a cycle has ended starts a new cycle, so the next failure gets its own retry.
         source.fail = true
         assertFailsWith<IllegalStateException> { synchronizer.episodeWatched(42, 8) }
         advanceTimeBy(5.minutes)

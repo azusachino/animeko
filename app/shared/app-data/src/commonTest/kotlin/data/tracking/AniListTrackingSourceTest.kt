@@ -15,6 +15,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import me.him188.ani.app.domain.tracking.TrackingEpisodeSynchronizer
+import me.him188.ani.tracking.api.DefaultTrackingRegistry
 import me.him188.ani.tracking.api.TrackingAccount
 import me.him188.ani.tracking.api.TrackingAccountState
 import me.him188.ani.tracking.api.TrackingBindingRecord
@@ -34,6 +36,7 @@ import me.him188.ani.tracking.api.TrackingStatus
 import me.him188.ani.tracking.api.TrackingStatusOption
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
@@ -121,6 +124,26 @@ class AniListTrackingSourceTest {
 
         assertEquals(0, provider.viewerRequests)
         assertEquals(0, provider.refreshCalls)
+    }
+
+    @Test
+    fun episodeWatchedOnBoundSubjectWithoutSessionRethrowsUnauthorized() = runTest(UnconfinedTestDispatcher()) {
+        val provider = FakeProvider(TrackingAccountState.LoggedOut, hasCredentials = false)
+        val source = source(provider, bindingsOf("account-a:42" to "100"))
+
+        assertFailsWith<TrackingProviderException.Unauthorized> { source.episodeWatched(42, 1) }
+        assertEquals(0, provider.refreshCalls)
+    }
+
+    @Test
+    fun unauthorizedEpisodeWatchIsKeptPendingBySynchronizer() = runTest(UnconfinedTestDispatcher()) {
+        val provider = FakeProvider(TrackingAccountState.LoggedOut, hasCredentials = false)
+        val pending = MapBindingStore()
+        val source = source(provider, bindingsOf("account-a:42" to "100"))
+        val synchronizer = TrackingEpisodeSynchronizer(DefaultTrackingRegistry(listOf(source)), pending)
+
+        assertFailsWith<TrackingProviderException.Unauthorized> { synchronizer.episodeWatched(42, 1) }
+        assertEquals(mapOf("42:1" to "1"), pending.entries())
     }
 
     @Test

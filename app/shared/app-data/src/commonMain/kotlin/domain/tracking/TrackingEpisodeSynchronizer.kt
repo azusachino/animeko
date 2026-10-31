@@ -110,8 +110,8 @@ class TrackingEpisodeSynchronizer(
 
     /**
      * Calls [retryPending] after each delay in [retryDelays], stopping early once the store is empty.
-     * [retryJob] is cleared under [lock] in the same step as the final drain, so a failure that lands right after
-     * the cycle gives up starts a fresh cycle instead of being silently skipped.
+     * [retryJob] is cleared under [lock] in the same step as the final drain, so a failure that lands after the
+     * final drain always starts a new cycle.
      */
     private suspend fun runRetryCycle() {
         for ((index, backoff) in retryDelays.withIndex()) {

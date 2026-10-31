@@ -218,9 +218,9 @@ class AniListTrackingSource(
         episodeSyncMutex.withLock {
             val account = try {
                 currentAccount()
-            } catch (_: TrackingProviderException.Unauthorized) {
-                logger.info { "[tracking-sync] skip: account unavailable (unauthorized)" }
-                return
+            } catch (error: TrackingProviderException.Unauthorized) {
+                logger.info { "[tracking-sync] account unavailable (unauthorized) for subject $subjectId, will retry" }
+                throw error
             }
             val mediaId = bindings.get(bindingKey(account.remoteId, subjectId))?.let(::TrackingMediaId)
             if (mediaId == null) {
@@ -235,12 +235,6 @@ class AniListTrackingSource(
             val number = episode.ep?.number
             if (number == null) {
                 logger.info { "[tracking-sync] skip: episode has no ep number (ep=${episode.ep}, sort=${episode.sort})" }
-                val sortNumber = episode.sort.number
-                if (episode.type == EpisodeType.MainStory && sortNumber != null && sortNumber > 0f &&
-                    sortNumber.toInt().toFloat() == sortNumber
-                ) {
-                    logger.info { "[tracking-sync] sort=${episode.sort} is a positive whole number; would use it if ep were used (not applied)" }
-                }
                 return
             }
             val progress = number.toInt()
@@ -251,8 +245,8 @@ class AniListTrackingSource(
 
             val current = provider.refresh(mediaId)
             if (current == null) {
-                logger.info { "[tracking-sync] skip: remote title refresh returned null for subject $subjectId" }
-                return
+                logger.info { "[tracking-sync] remote title refresh returned null for subject $subjectId, will retry" }
+                throw TrackingProviderException.Remote("AniList title is unavailable")
             }
             val entry = current.listEntry
             if (entry == null) {
