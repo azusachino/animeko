@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import me.him188.ani.tracking.api.TrackingAccount
 import me.him188.ani.tracking.api.TrackingAccountState
+import me.him188.ani.tracking.api.TrackingBindingRecord
 import me.him188.ani.tracking.api.TrackingCapabilities
 import me.him188.ani.tracking.api.TrackingListEntry
 import me.him188.ani.tracking.api.TrackingLoginCredentials
@@ -120,6 +121,21 @@ class AniListTrackingSourceTest {
 
         assertEquals(0, provider.viewerRequests)
         assertEquals(0, provider.refreshCalls)
+    }
+
+    @Test
+    fun restoredBindingsForOtherAccountsAreCountedAsUnconnected() = runTest(UnconfinedTestDispatcher()) {
+        val provider = FakeProvider(TrackingAccountState.LoggedIn(accountA))
+        val source = source(provider, bindingsOf())
+        val records = listOf(
+            TrackingBindingRecord("anilist", "account-a", 42, "100"),
+            TrackingBindingRecord("anilist", "account-b", 43, "101"),
+        )
+
+        assertEquals(1, source.countUnconnectedBindings(records))
+
+        provider.state.value = TrackingAccountState.LoggedOut
+        assertEquals(2, source.countUnconnectedBindings(records))
     }
 
     private fun TestScope.openSubject(source: TrackingSource, subjectId: Int = 42): Job {

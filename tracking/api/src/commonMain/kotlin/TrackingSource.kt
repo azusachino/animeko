@@ -103,6 +103,10 @@ class DefaultTrackingRegistry(override val sources: List<TrackingSource>) : Trac
         }
     }
 
+    override fun countUnconnectedBindings(records: List<TrackingBindingRecord>): Int = sources.sumOf { source ->
+        source.countUnconnectedBindings(records.filter { it.providerId == source.info.id.value })
+    }
+
     override suspend fun validateBindings(records: List<TrackingBindingRecord>) {
         val sourcesById = sources.associateBy { it.info.id.value }
         if (records.any { it.providerId !in sourcesById }) {
@@ -126,6 +130,10 @@ interface TrackingBindingBackup {
     fun exportBindings(): List<TrackingBindingRecord>
     suspend fun validateBindings(records: List<TrackingBindingRecord>)
     fun applyValidatedBindings(records: List<TrackingBindingRecord>)
+
+    /** How many of [records] belong to an account that is not currently signed in, so they stay inert. */
+    fun countUnconnectedBindings(records: List<TrackingBindingRecord>): Int = 0
+
     suspend fun restoreBindings(records: List<TrackingBindingRecord>) {
         validateBindings(records)
         applyValidatedBindings(records)

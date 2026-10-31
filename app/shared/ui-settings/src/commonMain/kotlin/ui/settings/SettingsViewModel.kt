@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.him188.ani.app.data.models.danmaku.DanmakuConfigSerializer
@@ -96,6 +97,7 @@ import me.him188.ani.app.ui.settings.tabs.network.toUIConfig
 import me.him188.ani.app.ui.user.SelfInfoStateProducer
 import me.him188.ani.danmaku.ui.DanmakuConfig
 import me.him188.ani.tracking.api.TrackingBindingBackup
+import me.him188.ani.tracking.api.TrackingBackupValidationException
 import me.him188.ani.tracking.api.TrackingBindingRecord
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.coroutines.SingleTaskExecutor
@@ -389,6 +391,7 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
     private suspend fun restoreSettingsBackup(content: String): Boolean {
         requireBackupTextSize(content)
         val backup = json.decodeFromJsonElement(SettingsBackup.serializer(), json.parseToJsonElement(content))
+        backup.tracking?.let { checkTrackingBackupVersion(it.version) }
         val savedBindings = backup.tracking?.bindings
         val bindingBackup = getKoin().getOrNull<TrackingBindingBackup>()
         require(savedBindings.isNullOrEmpty() || bindingBackup != null) { "Tracking backup is unavailable" }
@@ -427,17 +430,36 @@ open class SettingsViewModel : AbstractSettingsViewModel(), KoinComponent {
         // them on a different device.
         backup.tokenStore?.let { tokenRepository.restoreFromTokenSave(it) }
         savedBindings?.let { saved ->
-            bindingBackup?.applyValidatedBindings(saved.map {
+            val records = saved.map {
                 TrackingBindingRecord(it.providerId, it.accountId, it.subjectId, it.mediaId)
-            })
+            }
+            bindingBackup?.applyValidatedBindings(records)
+            val inert = bindingBackup?.countUnconnectedBindings(records) ?: 0
+            if (inert > 0) {
+                logger.warn("Restored $inert tracking bindings for accounts that are not signed in; they stay inert until the account connects")
+            }
         }
 
         return true
     }
 }
 
+internal const val TRACKING_BACKUP_VERSION = 1
+
+/** Rejects a tracking section written by a newer format before anything is applied. */
+internal fun checkTrackingBackupVersion(version: Int) {
+    if (version > TRACKING_BACKUP_VERSION) {
+        throw TrackingBackupValidationException(
+            "Tracking backup format v$version is newer than this app supports (v$TRACKING_BACKUP_VERSION); update Animeko to restore tracking",
+        )
+    }
+}
+
 @Serializable
-private data class TrackingBackupSection(val bindings: List<TrackingBindingSave>)
+private data class TrackingBackupSection(
+    val bindings: List<TrackingBindingSave>,
+    @EncodeDefault val version: Int = TRACKING_BACKUP_VERSION,
+)
 
 private fun Map<String, ServiceConnectionTester.TestState>.toUIState(): List<ProxyTestItem> {
     return buildList {

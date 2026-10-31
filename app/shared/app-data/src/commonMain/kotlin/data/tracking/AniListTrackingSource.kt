@@ -262,6 +262,11 @@ class AniListTrackingSource(
         bindingsVersion.value += 1
     }
 
+    override fun countUnconnectedBindings(records: List<TrackingBindingRecord>): Int {
+        val connected = (provider.accountState.value as? TrackingAccountState.LoggedIn)?.account?.remoteId
+        return records.count { it.accountId != connected }
+    }
+
     private fun validateBindingFields(records: List<TrackingBindingRecord>) {
         require(records.all {
             it.providerId == info.id.value && it.accountId.isNotBlank() && it.subjectId > 0 && it.mediaId.isNotBlank()
